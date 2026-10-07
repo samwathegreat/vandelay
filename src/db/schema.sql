@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS export_id_jmap (
 CREATE INDEX IF NOT EXISTS export_id_jmap_target_idx
     ON export_id_jmap (account_id, type_name, jmap_id);
 
+CREATE INDEX IF NOT EXISTS export_id_jmap_email_local_idx
+    ON export_id_jmap (local_id) WHERE type_name = 'email';
+
 CREATE TABLE IF NOT EXISTS sync_state_jmap (
     source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     type_name   TEXT    NOT NULL,
@@ -275,3 +278,6 @@ CREATE TABLE IF NOT EXISTS sync_id_takeout (
 
 CREATE INDEX IF NOT EXISTS sync_id_takeout_type_idx
     ON sync_id_takeout (source_id, type_name);
+
+CREATE INDEX IF NOT EXISTS sync_id_takeout_email_local_idx
+    ON sync_id_takeout (local_id) WHERE type_name = 'email';
