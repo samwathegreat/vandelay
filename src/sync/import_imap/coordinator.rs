@@ -1409,8 +1409,8 @@ mod tests {
         )
         .unwrap();
         let email_id = c.last_insert_rowid();
-        db::imap_ids::insert_email(&c, sid, "INBOX", 1, 101, email_id).unwrap();
-        db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 202, email_id).unwrap();
+        db::imap_ids::insert_email(&c, sid, "INBOX", 1, 101, email_id, None).unwrap();
+        db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 202, email_id, None).unwrap();
         (c, sid, email_id)
     }
 
