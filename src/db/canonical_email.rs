@@ -299,8 +299,8 @@ mod tests {
             params![blob],
         )
         .unwrap();
-        crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100).unwrap();
-        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100, None).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, None).unwrap();
 
         let got = consolidate_by_blob(&mut c).unwrap();
         assert_eq!(got.groups, 1);
