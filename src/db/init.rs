@@ -127,10 +127,7 @@ fn ensure_imap_gmail_msgid(conn: &Connection) -> Result<(), OpenError> {
         .filter_map(|r| r.ok())
         .any(|name| name == "gmail_msgid");
     if !has_column {
-        conn.execute(
-            "ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid TEXT",
-            [],
-        )?;
+        conn.execute("ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid TEXT", [])?;
     }
     conn.execute(
         "CREATE INDEX IF NOT EXISTS sync_id_imap_gmail_msgid_idx \
