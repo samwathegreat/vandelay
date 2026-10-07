@@ -123,9 +123,14 @@ fn ensure_imap_ids_allow_multiple_email_observations(conn: &Connection) -> Resul
 fn ensure_imap_gmail_msgid(conn: &Connection) -> Result<(), OpenError> {
     let mut stmt = conn.prepare("PRAGMA table_info(sync_id_imap)")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let has_column = rows.filter_map(|r| r.ok()).any(|name| name == "gmail_msgid");
+    let has_column = rows
+        .filter_map(|r| r.ok())
+        .any(|name| name == "gmail_msgid");
     if !has_column {
-        conn.execute("ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid INTEGER", [])?;
+        conn.execute(
+            "ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid INTEGER",
+            [],
+        )?;
     }
     conn.execute(
         "CREATE INDEX IF NOT EXISTS sync_id_imap_gmail_msgid_idx \
