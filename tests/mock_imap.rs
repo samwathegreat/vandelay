@@ -867,7 +867,9 @@ fn coordinator_present_run_is_convergent() {
     scripts.extend(single_inbox_scripts(100, 2, MSG_BODY));
 
     scripts.push(control_script_present_flags(100, 2, &[1], &[(1, "\\Seen")]));
-    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"));
+    scripts.push(worker_idle_script(
+        "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1",
+    ));
     let server = MockImap::start_scripts(scripts);
     let archive = tempfile("converge");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("first import");
@@ -898,7 +900,9 @@ fn coordinator_present_flag_change_updates_keywords() {
         &[1],
         &[(1, "\\Seen \\Flagged")],
     ));
-    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"));
+    scripts.push(worker_idle_script(
+        "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1",
+    ));
     let server = MockImap::start_scripts(scripts);
     let archive = tempfile("flagupdate");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("first import");
@@ -935,7 +939,9 @@ fn coordinator_present_newly_deleted_is_left_intact() {
         &[1],
         &[(1, "\\Seen \\Deleted")],
     ));
-    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"));
+    scripts.push(worker_idle_script(
+        "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1",
+    ));
     let server = MockImap::start_scripts(scripts);
     let archive = tempfile("presentdeleted");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("first import");
@@ -1688,13 +1694,22 @@ fn coordinator_enables_utf8_accept_when_advertised() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         conn.write_line("* OK ready")?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1")?;
+        write_capability(
+            conn,
+            "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1",
+        )?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1")?;
+        write_capability(
+            conn,
+            "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1",
+        )?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1")?;
+        write_capability(
+            conn,
+            "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1",
+        )?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.starts_with("ENABLE"));
@@ -1932,7 +1947,10 @@ fn mutf7_server_gets_the_folder_name_back_as_mutf7() {
         Ok(())
     });
 
-    let server = MockImap::start_scripts(vec![control, worker_idle_script("IMAP4rev2 LITERAL+ X-GM-EXT-1")]);
+    let server = MockImap::start_scripts(vec![
+        control,
+        worker_idle_script("IMAP4rev2 LITERAL+ X-GM-EXT-1"),
+    ]);
     let archive = tempfile("mutf7_name");
     let summary = run_import(&server, "alice", archive.clone(), |_| {}).expect("import");
     let email = summary
