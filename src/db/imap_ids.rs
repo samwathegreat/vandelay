@@ -39,7 +39,15 @@ pub fn insert_email(
         "INSERT OR REPLACE INTO sync_id_imap
          (source_id, type_name, folder, uidvalidity, uid, local_id, gmail_msgid)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![source_id, EMAIL, folder, uidvalidity, uid, local_id, gmail_msgid.map(|v| v as i64)],
+        params![
+            source_id,
+            EMAIL,
+            folder,
+            uidvalidity,
+            uid,
+            local_id,
+            gmail_msgid.map(|v| v as i64)
+        ],
     )?;
     Ok(())
 }
