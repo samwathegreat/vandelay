@@ -349,7 +349,6 @@ mod tests {
         assert!(!got.safe_to_apply());
     }
 
-
     #[test]
     fn analysis_blocks_local_email_shared_by_multiple_gmail_identities() {
         let (c, sid) = fixture();
