@@ -241,8 +241,9 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
         assert!(conn.is_readonly(rusqlite::DatabaseName::Main).unwrap());
-        assert!(conn
-            .execute("INSERT INTO probe DEFAULT VALUES", [])
-            .is_err());
+        assert!(
+            conn.execute("INSERT INTO probe DEFAULT VALUES", [])
+                .is_err()
+        );
     }
 }
