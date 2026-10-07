@@ -420,7 +420,7 @@ fn retry_after_reupload(
                     counts.failed += 1;
                 }
             }
-        },
+        }
         Ok(SingleImport::Skipped) => counts.skipped += 1,
         Ok(SingleImport::NotCreated { detail, .. }) => {
             logger.warn(&format!(
