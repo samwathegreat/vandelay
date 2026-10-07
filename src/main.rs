@@ -186,9 +186,7 @@ fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
                 completed as f64 * 100.0 / total as f64
             };
             let eta = if completed > 0 {
-                elapsed
-                    .saturating_mul(total.saturating_sub(completed))
-                    / completed
+                elapsed.saturating_mul(total.saturating_sub(completed)) / completed
             } else {
                 0
             };
