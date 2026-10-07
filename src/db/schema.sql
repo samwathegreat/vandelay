@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS sync_id_imap (
     folder       TEXT    NOT NULL,
     uidvalidity  INTEGER NOT NULL,
     uid          INTEGER NOT NULL,
+    gmail_msgid  INTEGER,
     local_id     INTEGER NOT NULL,
     PRIMARY KEY (source_id, type_name, folder, uidvalidity, uid)
 );
