@@ -240,6 +240,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM probe", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+        assert!(conn.is_readonly(rusqlite::DatabaseName::Main).unwrap());
         assert!(conn
             .execute("INSERT INTO probe DEFAULT VALUES", [])
             .is_err());
