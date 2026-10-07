@@ -875,6 +875,60 @@ fn reconcile_folder(
     Ok(())
 }
 
+fn reconcile_canonical_memberships(
+    tx: &rusqlite::Transaction<'_>,
+    source_id: i64,
+    local_id: i64,
+    counts: &mut TypeCounts,
+) -> Result<(), Error> {
+    let mut stmt = tx.prepare(
+        "SELECT DISTINCT mailbox.local_id
+         FROM sync_id_imap AS obs
+         JOIN sync_id_imap AS mailbox
+           ON mailbox.source_id = obs.source_id
+          AND mailbox.type_name = 'mailbox'
+          AND mailbox.folder = obs.folder
+         WHERE obs.source_id = ?1
+           AND obs.type_name = 'email'
+           AND obs.local_id = ?2
+         ORDER BY mailbox.local_id",
+    )?;
+    let mailbox_ids: Vec<i64> = stmt
+        .query_map(params![source_id, local_id], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    if mailbox_ids.is_empty() {
+        tx.execute("DELETE FROM emails WHERE id = ?1", params![local_id])?;
+        counts.deleted += 1;
+    } else {
+        let json = Value::Array(mailbox_ids.into_iter().map(Value::from).collect());
+        tx.execute(
+            "UPDATE emails SET mailbox_ids = ?1 WHERE id = ?2",
+            params![json.to_string(), local_id],
+        )?;
+        counts.updated += 1;
+    }
+    Ok(())
+}
+
+fn remove_email_observation(
+    tx: &rusqlite::Transaction<'_>,
+    source_id: i64,
+    folder: &str,
+    uidvalidity: u32,
+    uid: u32,
+    counts: &mut TypeCounts,
+) -> Result<(), Error> {
+    let Some(local_id) =
+        db::imap_ids::local_for_email(tx, source_id, folder, uidvalidity, uid)?
+    else {
+        return Ok(());
+    };
+    db::imap_ids::delete_email(tx, source_id, folder, uidvalidity, uid)?;
+    reconcile_canonical_memberships(tx, source_id, local_id, counts)
+}
+
 fn wipe_folder_emails(
     conn: &mut Connection,
     source_id: i64,
@@ -882,18 +936,18 @@ fn wipe_folder_emails(
     counts: &mut TypeCounts,
 ) -> Result<(), Error> {
     let tx = conn.transaction()?;
-    let ids: Vec<i64> = tx
+    let observations: Vec<(u32, u32)> = tx
         .prepare(
-            "SELECT local_id FROM sync_id_imap
+            "SELECT uidvalidity, uid FROM sync_id_imap
              WHERE source_id = ?1 AND type_name = ?2 AND folder = ?3",
         )?
-        .query_map(params![source_id, EMAIL_TYPE, folder], |row| row.get(0))?
-        .collect::<Result<Vec<i64>, _>>()?;
-    for id in &ids {
-        tx.execute("DELETE FROM emails WHERE id = ?1", params![id])?;
-        counts.deleted += 1;
+        .query_map(params![source_id, EMAIL_TYPE, folder], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (uidvalidity, uid) in observations {
+        remove_email_observation(&tx, source_id, folder, uidvalidity, uid, counts)?;
     }
-    db::imap_ids::delete_all_emails_in_folder(&tx, source_id, folder)?;
     tx.commit()?;
     Ok(())
 }
@@ -908,13 +962,7 @@ fn delete_vanished_emails(
 ) -> Result<(), Error> {
     let tx = conn.transaction()?;
     for &uid in uids {
-        if let Some(local_id) =
-            db::imap_ids::local_for_email(&tx, source_id, folder, uidvalidity, uid)?
-        {
-            tx.execute("DELETE FROM emails WHERE id = ?1", params![local_id])?;
-            db::imap_ids::delete_email(&tx, source_id, folder, uidvalidity, uid)?;
-            counts.deleted += 1;
-        }
+        remove_email_observation(&tx, source_id, folder, uidvalidity, uid, counts)?;
     }
     tx.commit()?;
     Ok(())
