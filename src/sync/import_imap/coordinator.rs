@@ -603,29 +603,32 @@ fn upsert_mailboxes(
         // Adopt that untracked role mailbox instead of creating a second Trash,
         // Sent, Drafts, etc. mailbox. Never steal a mailbox already tracked by
         // this IMAP source.
-        let role_existing = if existing.is_none() {
-            if let Some(role) = folder.role {
-                tx.query_row(
-                    "SELECT m.id FROM mailboxes m
-                     WHERE m.role = ?1
-                       AND NOT EXISTS (
-                           SELECT 1 FROM sync_id_imap s
-                           WHERE s.source_id = ?2 AND s.type_name = 'mailbox'
-                             AND s.local_id = m.id
-                       )
-                     LIMIT 1",
-                    params![role, source_id],
-                    |row| row.get(0),
-                )
-                .optional()?
-            } else {
-                None
-            }
+        let role_existing = if let Some(role) = folder.role {
+            tx.query_row(
+                "SELECT m.id FROM mailboxes m
+                 WHERE m.role = ?1
+                   AND m.id != COALESCE(?3, -1)
+                   AND NOT EXISTS (
+                       SELECT 1 FROM sync_id_imap s
+                       WHERE s.source_id = ?2 AND s.type_name = 'mailbox'
+                         AND s.local_id = m.id
+                         AND s.folder != ?4
+                   )
+                 LIMIT 1",
+                params![role, source_id, existing, folder.name],
+                |row| row.get(0),
+            )
+            .optional()?
         } else {
             None
         };
-        let id = if let Some(id) = existing.or(role_existing) {
-            if existing.is_none() {
+        // SPECIAL-USE is authoritative even for an already-recorded folder.
+        // This repairs archives produced by older importers that mapped (for
+        // example) Gmail's localized \\Junk folder to an ordinary duplicate
+        // mailbox before a canonical role mailbox was known.
+        let adopted = role_existing.filter(|id| Some(*id) != existing);
+        let id = if let Some(id) = adopted.or(existing) {
+            if adopted.is_some() {
                 db::imap_ids::insert_mailbox(&tx, source_id, &folder.name, id)?;
                 counts.updated += 1;
             }
