@@ -14,6 +14,7 @@ pub struct GmailConsolidationAnalysis {
     pub rows_removed: i64,
     pub blob_conflict_groups: i64,
     pub keyword_conflict_groups: i64,
+    pub multi_identity_local_rows: i64,
     pub max_rows_per_identity: i64,
     pub email_rows_before: i64,
     pub email_rows_after: i64,
@@ -21,7 +22,10 @@ pub struct GmailConsolidationAnalysis {
 
 impl GmailConsolidationAnalysis {
     pub fn safe_to_apply(&self) -> bool {
-        self.missing == 0 && self.blob_conflict_groups == 0 && self.keyword_conflict_groups == 0
+        self.missing == 0
+            && self.blob_conflict_groups == 0
+            && self.keyword_conflict_groups == 0
+            && self.multi_identity_local_rows == 0
     }
 }
 
@@ -38,8 +42,9 @@ pub struct GmailConsolidation {
 /// Analyze how Gmail X-GM-MSGID identity would canonicalize the archive.
 ///
 /// Gmail identity is scoped by IMAP source. The report is read-only and treats
-/// missing Gmail identity, differing RFC822 blobs, or differing keyword state
-/// within one Gmail identity as blockers for an automatic apply.
+/// missing Gmail identity, differing RFC822 blobs, differing keyword state
+/// within one Gmail identity, or a local Email row shared by multiple Gmail
+/// identities as blockers for an automatic apply.
 pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailConsolidationAnalysis> {
     let observations: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sync_id_imap WHERE type_name = 'email'",
@@ -106,6 +111,18 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         |r| r.get(0),
     )?;
 
+    let multi_identity_local_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM (
+             SELECT local_id
+             FROM sync_id_imap
+             WHERE type_name = 'email' AND gmail_msgid IS NOT NULL
+             GROUP BY local_id
+             HAVING COUNT(DISTINCT CAST(source_id AS TEXT) || ':' || gmail_msgid) > 1
+         )",
+        [],
+        |r| r.get(0),
+    )?;
+
     let missing = observations - populated;
     Ok(GmailConsolidationAnalysis {
         observations,
@@ -116,6 +133,7 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         rows_removed,
         blob_conflict_groups,
         keyword_conflict_groups,
+        multi_identity_local_rows,
         max_rows_per_identity,
         email_rows_before,
         email_rows_after: email_rows_before - rows_removed,
@@ -304,6 +322,7 @@ mod tests {
         assert_eq!(got.rows_removed, 1);
         assert_eq!(got.blob_conflict_groups, 0);
         assert_eq!(got.keyword_conflict_groups, 0);
+        assert_eq!(got.multi_identity_local_rows, 0);
         assert_eq!(got.email_rows_before, 2);
         assert_eq!(got.email_rows_after, 1);
         assert!(got.safe_to_apply());
@@ -327,6 +346,26 @@ mod tests {
 
         let got = analyze_gmail_identities(&c).unwrap();
         assert_eq!(got.blob_conflict_groups, 1);
+        assert!(!got.safe_to_apply());
+    }
+
+
+    #[test]
+    fn analysis_blocks_local_email_shared_by_multiple_gmail_identities() {
+        let (c, sid) = fixture();
+        let blob = crate::db::blobs::intern_blob(&c, b"same bytes").unwrap();
+        c.execute(
+            "INSERT INTO emails (id,blob_id,received_at,mailbox_ids,keywords,message_match)
+             VALUES (100,?1,'2026-01-01Z','[10]','[]','{}')",
+            params![blob],
+        )
+        .unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100, Some(42)).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 100, Some(43))
+            .unwrap();
+
+        let got = analyze_gmail_identities(&c).unwrap();
+        assert_eq!(got.multi_identity_local_rows, 1);
         assert!(!got.safe_to_apply());
     }
 
