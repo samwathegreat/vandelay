@@ -1063,16 +1063,19 @@ fn insert_single_message(
             .collect(),
     );
 
-    // Exact RFC822 content is the canonical physical-message identity. Reuse
-    // an existing Email row when this message is observed through another
-    // Gmail/IMAP mailbox instead of creating one Email per folder.
-    let existing: Option<i64> = tx
-        .query_row(
-            "SELECT id FROM emails WHERE blob_id = ?1 ORDER BY id LIMIT 1",
-            params![blob_id],
-            |row| row.get(0),
-        )
-        .optional()?;
+    // Gmail's X-GM-MSGID is the authoritative message identity when the
+    // server supplies it. Identical RFC822 bytes can represent distinct Gmail
+    // messages, so blob_id is only the fallback for generic IMAP servers.
+    let existing: Option<i64> = match attrs.gmail_msgid {
+        Some(gmail_msgid) => db::imap_ids::local_for_gmail_msgid(tx, source_id, gmail_msgid)?,
+        None => tx
+            .query_row(
+                "SELECT id FROM emails WHERE blob_id = ?1 ORDER BY id LIMIT 1",
+                params![blob_id],
+                |row| row.get(0),
+            )
+            .optional()?,
+    };
 
     let email_local = match existing {
         Some(id) => {
@@ -1116,7 +1119,9 @@ fn insert_single_message(
         }
     };
 
-    db::imap_ids::insert_email(tx, source_id, folder, uidvalidity, uid, email_local)?;
+    db::imap_ids::insert_email(
+        tx, source_id, folder, uidvalidity, uid, email_local, attrs.gmail_msgid,
+    )?;
     reconcile_canonical_memberships(tx, source_id, email_local, counts)?;
     counts.fetched += 1;
     Ok(())
@@ -1144,7 +1149,14 @@ fn refresh_present_flags(
         let resp = control_run_collect(
             client,
             control_ctx,
-            &command::uid_fetch(&set, &["UID", "FLAGS"]),
+            &command::uid_fetch(
+                &set,
+                if client.has_capability("X-GM-EXT-1") {
+                    &["UID", "FLAGS", "X-GM-MSGID"]
+                } else {
+                    &["UID", "FLAGS"]
+                },
+            ),
         )?;
         for u in &resp.untagged {
             let Some(attrs) = fetch::extract(u) else {
@@ -1153,6 +1165,12 @@ fn refresh_present_flags(
             let Some(uid) = attrs.uid else {
                 continue;
             };
+            if let Some(gmail_msgid) = attrs.gmail_msgid {
+                tx.execute(
+                    "UPDATE sync_id_imap SET gmail_msgid = ?1 WHERE source_id = ?2 AND type_name = ?3 AND folder = ?4 AND uidvalidity = ?5 AND uid = ?6",
+                    params![gmail_msgid as i64, source_id, EMAIL_TYPE, folder, uidvalidity, uid],
+                )?;
+            }
             let translation = translate_flags(&attrs.flags, include_deleted);
             if translation.has_deleted_flag && !include_deleted {
                 continue;
