@@ -168,6 +168,7 @@ fn run_import(
         automap: true,
         include_deleted: false,
         fetch_batch: 256,
+        gmail_identity_backfill: false,
         imap_connections: 1,
         allow_source_change: false,
     };
