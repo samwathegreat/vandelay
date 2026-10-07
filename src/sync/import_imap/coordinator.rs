@@ -260,6 +260,17 @@ fn run_into(
         .refresh_capabilities()
         .map_err(|e| Error::Connection(format!("post-auth CAPABILITY: {e}")))?;
 
+    // This branch intentionally treats IMAP as a Gmail source. Gmail's
+    // X-GM-MSGID is the only safe message identity for IMAP ingestion; blob
+    // equality is not identity because distinct Gmail messages can have
+    // identical RFC822 bytes.
+    if !client.has_capability("X-GM-EXT-1") {
+        return Err(Error::Usage(
+            "this Gmail archive branch requires an IMAP server advertising X-GM-EXT-1"
+                .to_owned(),
+        ));
+    }
+
     if config.compress {
         if client.has_capability("COMPRESS=DEFLATE") {
             client
@@ -1235,19 +1246,16 @@ fn insert_single_message(
             .collect(),
     );
 
-    // Gmail's X-GM-MSGID is the authoritative message identity when the
-    // server supplies it. Identical RFC822 bytes can represent distinct Gmail
-    // messages, so blob_id is only the fallback for generic IMAP servers.
-    let existing: Option<i64> = match attrs.gmail_msgid {
-        Some(gmail_msgid) => db::imap_ids::local_for_gmail_msgid(tx, source_id, gmail_msgid)?,
-        None => tx
-            .query_row(
-                "SELECT id FROM emails WHERE blob_id = ?1 ORDER BY id LIMIT 1",
-                params![blob_id],
-                |row| row.get(0),
-            )
-            .optional()?,
-    };
+    // X-GM-MSGID is mandatory identity on this Gmail-focused branch.
+    // Never fall back to blob equality: distinct Gmail messages may have
+    // identical RFC822 bytes and must remain distinct.
+    let gmail_msgid = attrs.gmail_msgid.ok_or_else(|| {
+        Error::Partial(format!(
+            "folder {folder:?} uid {uid}: Gmail FETCH omitted required X-GM-MSGID"
+        ))
+    })?;
+    let existing: Option<i64> =
+        db::imap_ids::local_for_gmail_msgid(tx, source_id, gmail_msgid)?;
 
     let email_local = match existing {
         Some(id) => {
@@ -1298,7 +1306,7 @@ fn insert_single_message(
         uidvalidity,
         uid,
         email_local,
-        attrs.gmail_msgid,
+        Some(gmail_msgid),
     )?;
     reconcile_canonical_memberships(tx, source_id, email_local, counts)?;
     counts.fetched += 1;
