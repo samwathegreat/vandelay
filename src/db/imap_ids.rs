@@ -341,10 +341,7 @@ mod tests {
     fn gmail_identity_roundtrips_full_u64_range_as_text() {
         let (c, sid) = setup();
         insert_email(&c, sid, "INBOX", 1, 10, 1, Some(u64::MAX)).unwrap();
-        assert_eq!(
-            local_for_gmail_msgid(&c, sid, u64::MAX).unwrap(),
-            Some(1)
-        );
+        assert_eq!(local_for_gmail_msgid(&c, sid, u64::MAX).unwrap(), Some(1));
         let stored: String = c
             .query_row(
                 "SELECT gmail_msgid FROM sync_id_imap WHERE source_id = ?1 AND type_name = 'email' AND uid = 10",
