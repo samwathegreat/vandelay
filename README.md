@@ -353,3 +353,14 @@ at your option.
 ## Copyright
 
 Copyright (C) 2020, Stalwart Labs LLC
+
+## Gmail canonical-mirror project notes
+
+The `gmail-canonical-mirror` branch contains Gmail-specific archival and canonical-identity work. The inherited README above describes the broader upstream Vandelay feature set; the project-specific safety contract and operational state are documented separately:
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Gmail canonicalization](docs/GMAIL-CANONICALIZATION.md)
+- [Operations](docs/OPERATIONS.md)
+- [Decision log](docs/DECISIONS.md)
+
+These documents are maintained as durable project memory. Public examples are intentionally sanitized and must not contain archive-derived personal information.
