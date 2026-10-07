@@ -120,17 +120,25 @@ fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
     println!("  populated={}", analysis.populated);
     println!("  missing={}", analysis.missing);
     println!("  unique_x_gm_msgid={}", analysis.gmail_identities);
-    println!("  duplicate_identity_groups={}", analysis.duplicate_identity_groups);
+    println!(
+        "  duplicate_identity_groups={}",
+        analysis.duplicate_identity_groups
+    );
     println!("  rows_removed={}", analysis.rows_removed);
     println!("  blob_conflict_groups={}", analysis.blob_conflict_groups);
-    println!("  keyword_conflict_groups={}", analysis.keyword_conflict_groups);
+    println!(
+        "  keyword_conflict_groups={}",
+        analysis.keyword_conflict_groups
+    );
     println!("  max_rows_per_identity={}", analysis.max_rows_per_identity);
     println!("  email_rows_before={}", analysis.email_rows_before);
     println!("  email_rows_after={}", analysis.email_rows_after);
     println!("  safe_to_apply={}", analysis.safe_to_apply());
 
     if !apply {
-        println!("read-only analysis; rerun with --apply only after reviewing this report and taking a checkpoint");
+        println!(
+            "read-only analysis; rerun with --apply only after reviewing this report and taking a checkpoint"
+        );
         return 0;
     }
     if !analysis.safe_to_apply() {
@@ -147,10 +155,22 @@ fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
     println!("Gmail identity consolidation applied:");
     println!("  groups={}", result.groups);
     println!("  removed_rows={}", result.removed_rows);
-    println!("  remapped_imap_observations={}", result.remapped_imap_observations);
-    println!("  removed_export_mappings={}", result.removed_export_mappings);
-    println!("  removed_takeout_mappings={}", result.removed_takeout_mappings);
-    println!("  remapped_takeout_mappings={}", result.remapped_takeout_mappings);
+    println!(
+        "  remapped_imap_observations={}",
+        result.remapped_imap_observations
+    );
+    println!(
+        "  removed_export_mappings={}",
+        result.removed_export_mappings
+    );
+    println!(
+        "  removed_takeout_mappings={}",
+        result.removed_takeout_mappings
+    );
+    println!(
+        "  remapped_takeout_mappings={}",
+        result.remapped_takeout_mappings
+    );
     0
 }
 
