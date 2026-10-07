@@ -663,18 +663,25 @@ fn delete_vanished_folders(
             mailbox_counts.failed += 1;
             continue;
         }
-        let email_ids: Vec<i64> = tx
+        let observations: Vec<(u32, u32)> = tx
             .prepare(
-                "SELECT local_id FROM sync_id_imap
+                "SELECT uidvalidity, uid FROM sync_id_imap
                  WHERE source_id = ?1 AND type_name = ?2 AND folder = ?3",
             )?
-            .query_map(params![source_id, EMAIL_TYPE, name], |row| row.get(0))?
-            .collect::<Result<Vec<i64>, _>>()?;
-        for eid in &email_ids {
-            tx.execute("DELETE FROM emails WHERE id = ?1", params![eid])?;
-            email_counts.deleted += 1;
+            .query_map(params![source_id, EMAIL_TYPE, name], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (uidvalidity, uid) in observations {
+            remove_email_observation(
+                &tx,
+                source_id,
+                name,
+                uidvalidity,
+                uid,
+                email_counts,
+            )?;
         }
-        db::imap_ids::delete_all_emails_in_folder(&tx, source_id, name)?;
         db::imap_state::delete(&tx, source_id, name)?;
         tx.execute("DELETE FROM mailboxes WHERE id = ?1", params![local_id])?;
         db::imap_ids::delete_mailbox(&tx, source_id, name)?;
