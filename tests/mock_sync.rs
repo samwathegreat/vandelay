@@ -579,16 +579,33 @@ fn email_export_sends_one_email_per_import_call() {
         .expect(0)
         .create();
 
-    let imports = server
-        .mock("POST", api)
-        .match_body(Matcher::Regex("Email/import".into()))
-        .with_body(
-            json!({"methodResponses":[["Email/import",
-                {"accountId":"w","created":{"e":{"id":"x","blobId":"b","threadId":"t","size":10}}},"i"]]})
-            .to_string(),
-        )
-        .expect(2)
-        .create();
+let import_1 = server
+    .mock("POST", api)
+    .match_body(Matcher::AllOf(vec![
+        Matcher::Regex("Email/import".into()),
+        Matcher::Regex("\"e1\"".into()),
+    ]))
+    .with_body(
+        json!({"methodResponses":[["Email/import",
+            {"accountId":"w","created":{"e1":{"id":"x1","blobId":"b1","threadId":"t1","size":10}}},"i"]]})
+        .to_string(),
+    )
+    .expect(1)
+    .create();
+
+let import_2 = server
+    .mock("POST", api)
+    .match_body(Matcher::AllOf(vec![
+        Matcher::Regex("Email/import".into()),
+        Matcher::Regex("\"e2\"".into()),
+    ]))
+    .with_body(
+        json!({"methodResponses":[["Email/import",
+            {"accountId":"w","created":{"e2":{"id":"x2","blobId":"b2","threadId":"t2","size":10}}},"i"]]})
+        .to_string(),
+    )
+    .expect(1)
+    .create();
 
     let summary = sync::export::run(
         CommonConfig {
@@ -626,7 +643,8 @@ fn email_export_sends_one_email_per_import_call() {
     assert!(!summary.any_failed(), "no whole-run failure");
 
     single_only.assert();
-    imports.assert();
+    import_1.assert();
+    import_2.assert();
     let _ = std::fs::remove_file(&archive);
 }
 
