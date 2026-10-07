@@ -139,6 +139,37 @@ pub fn email_uids_in_folder(
     Ok(map)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GmailIdentityCoverage {
+    pub observations: u64,
+    pub populated: u64,
+    pub missing: u64,
+    pub identities: u64,
+}
+
+pub fn gmail_identity_coverage(
+    conn: &Connection,
+    source_id: i64,
+) -> Result<GmailIdentityCoverage, rusqlite::Error> {
+    conn.query_row(
+        "SELECT COUNT(*),
+                COUNT(gmail_msgid),
+                COUNT(*) - COUNT(gmail_msgid),
+                COUNT(DISTINCT gmail_msgid)
+         FROM sync_id_imap
+         WHERE source_id = ?1 AND type_name = ?2",
+        params![source_id, EMAIL],
+        |row| {
+            Ok(GmailIdentityCoverage {
+                observations: row.get::<_, i64>(0)? as u64,
+                populated: row.get::<_, i64>(1)? as u64,
+                missing: row.get::<_, i64>(2)? as u64,
+                identities: row.get::<_, i64>(3)? as u64,
+            })
+        },
+    )
+}
+
 pub fn email_observation_count(
     conn: &Connection,
     source_id: i64,
@@ -304,6 +335,25 @@ mod tests {
         let folders = folders_with_emails(&c, sid).unwrap();
         assert!(folders.contains("INBOX"));
         assert!(folders.contains("Sent"));
+    }
+
+    #[test]
+    fn gmail_identity_coverage_reports_backfill_state() {
+        let (c, sid) = setup();
+        insert_email(&c, sid, "INBOX", 1, 10, 1, Some(1001)).unwrap();
+        insert_email(&c, sid, "[Gmail]/All Mail", 2, 20, 1, Some(1001)).unwrap();
+        insert_email(&c, sid, "Sent", 3, 30, 2, Some(1002)).unwrap();
+        insert_email(&c, sid, "Project", 4, 40, 3, None).unwrap();
+
+        assert_eq!(
+            gmail_identity_coverage(&c, sid).unwrap(),
+            GmailIdentityCoverage {
+                observations: 4,
+                populated: 3,
+                missing: 1,
+                identities: 2,
+            }
+        );
     }
 
     #[test]
