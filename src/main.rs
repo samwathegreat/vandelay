@@ -112,7 +112,15 @@ fn open_gmail_consolidation_archive(
     if apply {
         rusqlite::Connection::open(archive)
     } else {
-        rusqlite::Connection::open_with_flags(archive, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        let mut uri = url::Url::from_file_path(archive)
+            .map_err(|_| rusqlite::Error::InvalidPath(archive.to_path_buf()))?;
+        uri.query_pairs_mut()
+            .append_pair("mode", "ro")
+            .append_pair("immutable", "1");
+        rusqlite::Connection::open_with_flags(
+            uri.as_str(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
     }
 }
 
@@ -225,11 +233,15 @@ mod tests {
 
         {
             let conn = rusqlite::Connection::open(&archive).unwrap();
+            conn.pragma_update(None, "journal_mode", "WAL").unwrap();
             conn.execute_batch("CREATE TABLE probe (id INTEGER PRIMARY KEY);")
                 .unwrap();
         }
 
+        assert!(!archive.with_extension("sqlite-wal").exists());
+        assert!(!archive.with_extension("sqlite-shm").exists());
         fs::set_permissions(&archive, fs::Permissions::from_mode(0o444)).unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
 
         let conn = open_gmail_consolidation_archive(&archive, false).unwrap();
         let count: i64 = conn
@@ -241,5 +253,8 @@ mod tests {
             conn.execute("INSERT INTO probe DEFAULT VALUES", [])
                 .is_err()
         );
+
+        drop(conn);
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
     }
 }
