@@ -479,7 +479,8 @@ fn write_fetch_message(
     body: &[u8],
 ) -> std::io::Result<()> {
     let header = format!(
-        "* {seq} FETCH (UID {uid} FLAGS (\\Seen) INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
+        "* {seq} FETCH (UID {uid} X-GM-MSGID {} FLAGS (\\Seen) INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
+        1_000_000_u64 + u64::from(uid),
         body.len(),
         body.len()
     );
@@ -515,7 +516,7 @@ fn serve_one_folder(
 
 fn control_script_one_folder(uidvalidity: u32, uidnext: u32, uids: &'static [u32]) -> Script {
     Box::new(move |conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         serve_one_folder(conn, uidvalidity, uidnext, uids)
     })
 }
@@ -527,7 +528,7 @@ fn control_script_present_flags(
     flags_reply: &'static [(u32, &'static str)],
 ) -> Script {
     Box::new(move |conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, cmd) = conn.read_command()?;
         assert_eq!(cmd, "LIST \"\" \"*\"");
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
@@ -562,7 +563,7 @@ fn coordinator_imports_one_folder_one_message() {
     let server = MockImap::start_scripts(vec![
         control_script_one_folder(12345, 2, &[1]),
         worker_fetch_script(
-            "IMAP4rev2 LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1",
             "INBOX",
             12345,
             2,
@@ -597,7 +598,7 @@ const DOVECOT_PRE_LOGIN_CAPS: &str =
     "IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN";
 const DOVECOT_POST_LOGIN_CAPS: &str = "IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT \
     UIDPLUS LITERAL+ NOTIFY IMAPSIEVE=sieve://127.0.0.1:4190 \
-    QUOTA ACL RIGHTS=texk";
+    QUOTA ACL RIGHTS=texk X-GM-EXT-1";
 
 #[test]
 fn coordinator_accepts_dovecot_post_login_capability_with_imapsieve_url() {
@@ -629,7 +630,7 @@ fn coordinator_accepts_dovecot_post_login_capability_with_imapsieve_url() {
     let server = MockImap::start_scripts(vec![
         control,
         worker_fetch_script(
-            "IMAP4rev1 SASL-IR LITERAL+ AUTH=PLAIN IMAPSIEVE=sieve://127.0.0.1:4190",
+            "IMAP4rev1 SASL-IR LITERAL+ AUTH=PLAIN IMAPSIEVE=sieve://127.0.0.1:4190 X-GM-EXT-1",
             "INBOX",
             12345,
             2,
@@ -653,7 +654,7 @@ fn coordinator_accepts_dovecot_post_login_capability_with_imapsieve_url() {
 #[test]
 fn coordinator_uses_esearch_when_advertised() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
         conn.write_line(&format!("{tag} OK"))?;
@@ -671,7 +672,7 @@ fn coordinator_uses_esearch_when_advertised() {
     let server = MockImap::start_scripts(vec![
         control,
         worker_fetch_script(
-            "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN X-GM-EXT-1",
             "INBOX",
             100,
             4,
@@ -688,7 +689,7 @@ fn coordinator_uses_esearch_when_advertised() {
 #[test]
 fn coordinator_falls_back_when_esearch_returns_bad() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
         conn.write_line(&format!("{tag} OK"))?;
@@ -709,7 +710,7 @@ fn coordinator_falls_back_when_esearch_returns_bad() {
     let server = MockImap::start_scripts(vec![
         control,
         worker_fetch_script(
-            "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 ESEARCH LITERAL+ AUTH=PLAIN X-GM-EXT-1",
             "INBOX",
             100,
             2,
@@ -733,7 +734,7 @@ fn coordinator_falls_back_when_esearch_returns_bad() {
 #[test]
 fn coordinator_falls_back_to_uid_fetch_when_search_all_bad() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
         conn.write_line(&format!("{tag} OK"))?;
@@ -754,7 +755,7 @@ fn coordinator_falls_back_to_uid_fetch_when_search_all_bad() {
     let server = MockImap::start_scripts(vec![
         control,
         worker_fetch_script(
-            "IMAP4rev2 LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1",
             "INBOX",
             100,
             2,
@@ -776,7 +777,7 @@ fn coordinator_falls_back_to_uid_fetch_when_search_all_bad() {
 fn coordinator_imports_message_despite_size_mismatch() {
     let control = control_script_one_folder(100, 2, &[1]);
     let worker: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.starts_with("SELECT"));
         write_select(conn, &tag, 100, 2, 1)?;
@@ -810,7 +811,7 @@ fn single_inbox_scripts(uidvalidity: u32, uidnext: u32, body: &'static [u8]) -> 
     vec![
         control_script_one_folder(uidvalidity, uidnext, &[1]),
         worker_fetch_script(
-            "IMAP4rev2 LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1",
             "INBOX",
             uidvalidity,
             uidnext,
@@ -1032,7 +1033,7 @@ fn coordinator_omits_special_use_when_unadvertised() {
 fn coordinator_skips_deleted_messages_by_default() {
     let control = control_script_one_folder(100, 3, &[1, 2]);
     let worker: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.starts_with("SELECT"));
         write_select(conn, &tag, 100, 3, 2)?;
@@ -1072,7 +1073,7 @@ fn coordinator_skips_deleted_messages_by_default() {
 #[test]
 fn coordinator_source_change_detected_on_different_url() {
     let control1: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line(&format!("{tag} OK"))?;
         let (tag, _) = conn.read_command()?;
@@ -1088,7 +1089,7 @@ fn coordinator_source_change_detected_on_different_url() {
     run_import(&server1, "alice", archive.clone(), |_| {}).expect("first");
 
     let control2: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         drain_until_close(conn);
         Ok(())
     });
@@ -1182,7 +1183,7 @@ fn coordinator_dispatches_to_multiple_worker_connections() {
     let make_worker = || -> Script {
         Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
             WORKER_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
-            auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+            auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
 
             loop {
                 let (tag, cmd) = match conn.read_command() {
@@ -1300,7 +1301,7 @@ fn coordinator_uses_list_status_to_skip_empty_folder_select() {
     let server = MockImap::start_scripts(vec![
         control,
         worker_fetch_script(
-            "IMAP4rev2 LITERAL+ LIST-EXTENDED LIST-STATUS",
+            "IMAP4rev2 LITERAL+ LIST-EXTENDED LIST-STATUS X-GM-EXT-1",
             "Sub",
             200,
             2,
@@ -1328,7 +1329,7 @@ fn coordinator_noops_between_folders() {
     NOOPS.store(0, Ordering::SeqCst);
 
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"A\"")?;
         conn.write_line("* LIST () \"/\" \"B\"")?;
@@ -1381,7 +1382,7 @@ fn coordinator_retries_transient_no_on_uid_search() {
     SEARCH_ATTEMPTS.store(0, Ordering::SeqCst);
 
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
         conn.write_line(&format!("{tag} OK"))?;
@@ -1404,7 +1405,7 @@ fn coordinator_retries_transient_no_on_uid_search() {
     let server = MockImap::start_scripts(vec![
         control,
         worker_fetch_script(
-            "IMAP4rev2 LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1",
             "INBOX",
             100,
             2,
@@ -1491,7 +1492,7 @@ fn coordinator_auth_plain_and_login_both_refused_aborts_run() {
 #[test]
 fn coordinator_skips_folder_on_select_no() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
         conn.write_line("* LIST () \"/\" \"Forbidden\"")?;
@@ -1532,7 +1533,7 @@ fn coordinator_skips_folder_on_select_no() {
 fn coordinator_include_deleted_imports_with_dollar_deleted_keyword() {
     let control = control_script_one_folder(100, 2, &[1]);
     let worker: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.starts_with("SELECT"));
         write_select(conn, &tag, 100, 2, 1)?;
@@ -1571,7 +1572,7 @@ fn coordinator_include_deleted_imports_with_dollar_deleted_keyword() {
 #[test]
 fn coordinator_noautomap_leaves_role_null_on_heuristic_match() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"Sent Items\"")?;
         conn.write_line(&format!("{tag} OK"))?;
@@ -1647,7 +1648,7 @@ fn coordinator_subscribed_only_excludes_unsubscribed() {
 #[test]
 fn coordinator_imap4rev1_only_works() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev1 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev1 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
         conn.write_line(&format!("{tag} OK"))?;
@@ -1767,7 +1768,7 @@ fn coordinator_skips_enable_when_utf8_accept_absent() {
 #[test]
 fn coordinator_inbox_casefold_lowercase_input() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"Inbox\"")?;
         conn.write_line(&format!("{tag} OK"))?;
@@ -1838,7 +1839,7 @@ const FRENCH_SENT_MUTF7: &str = "Envoy&AOk-s";
 #[test]
 fn utf8_accept_server_gets_the_folder_name_back_as_utf8() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, cmd) = conn.read_command()?;
         assert_eq!(cmd, "LIST \"\" \"*\"");
         conn.write_line(&format!("* LIST () \"/\" \"{TURKISH_SENT}\""))?;
@@ -1859,7 +1860,7 @@ fn utf8_accept_server_gets_the_folder_name_back_as_utf8() {
         Ok(())
     });
     let worker: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, name) = read_select_mailbox(conn)?;
         assert_eq!(
             name, TURKISH_SENT,
@@ -1896,7 +1897,7 @@ fn utf8_accept_server_gets_the_folder_name_back_as_utf8() {
 #[test]
 fn mutf7_server_gets_the_folder_name_back_as_mutf7() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, cmd) = conn.read_command()?;
         assert_eq!(cmd, "LIST \"\" \"*\"");
         conn.write_line(&format!("* LIST () \"/\" \"{FRENCH_SENT_MUTF7}\""))?;
@@ -1952,7 +1953,7 @@ fn modified_utf7_name_is_selected_as_listed() {
 
 fn assert_name_selected_as_listed(listed: &'static str, stored: &str, archive_name: &str) {
     let control: Script = Box::new(move |conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, cmd) = conn.read_command()?;
         assert_eq!(cmd, "LIST \"\" \"*\"");
         conn.write_line(&format!("* LIST () \"/\" \"{listed}\""))?;
@@ -1973,7 +1974,7 @@ fn assert_name_selected_as_listed(listed: &'static str, stored: &str, archive_na
         Ok(())
     });
     let worker: Script = Box::new(move |conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        auth_preamble(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         let (tag, name) = read_select_mailbox(conn)?;
         assert_eq!(
             name, listed,
