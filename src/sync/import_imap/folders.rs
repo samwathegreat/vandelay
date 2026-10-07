@@ -146,12 +146,20 @@ pub fn apply_filters(
     }
     let mut resolved: Vec<ResolvedFolder> = Vec::with_capacity(keep.len());
     for f in keep {
-        let role = automap::role_for_folder(
+        let detected_role = automap::role_for_folder(
             &f.name,
             &f.attributes,
             &filters.namespace_prefix,
             filters.automap_enabled,
         );
+        // JMAP Mailbox roles do not include Gmail's virtual \\All and
+        // \\Flagged views. Keep those folders and their memberships, but
+        // export them as ordinary mailboxes so standards-compliant targets
+        // such as Stalwart do not reject Mailbox/set.
+        let role = match detected_role {
+            Some("all" | "flagged") => None,
+            other => other,
+        };
         if let Some(r) = role
             && filters
                 .exclude_special
@@ -353,6 +361,25 @@ mod tests {
         assert_eq!(res.len(), 3);
         let sent = res.iter().find(|f| f.name == "Sent").unwrap();
         assert_eq!(sent.role, Some("sent"));
+    }
+
+    #[test]
+    fn gmail_all_and_flagged_views_are_plain_mailboxes() {
+        let folders = collect_from_list(
+            &[
+                lst("[Gmail]/All Mail", "/", &["\\\\All"]),
+                lst("[Gmail]/Starred", "/", &["\\\\Flagged"]),
+            ],
+            false,
+        )
+        .unwrap();
+        let res = apply_filters(folders, &filters_default());
+        let all = res.iter().find(|f| f.name == "[Gmail]/All Mail").unwrap();
+        let starred = res.iter().find(|f| f.name == "[Gmail]/Starred").unwrap();
+        assert_eq!(all.role, None);
+        assert_eq!(starred.role, None);
+        assert_eq!(all.leaf, "All Mail");
+        assert_eq!(starred.leaf, "Starred");
     }
 
     #[test]
