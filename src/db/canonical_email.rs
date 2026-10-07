@@ -2,23 +2,21 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
 
-use std::collections::BTreeSet;
-
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct GmailConsolidationAnalysis {
-    pub observations: u64,
-    pub populated: u64,
-    pub missing: u64,
-    pub gmail_identities: u64,
-    pub duplicate_identity_groups: u64,
-    pub rows_removed: u64,
-    pub blob_conflict_groups: u64,
-    pub keyword_conflict_groups: u64,
-    pub max_rows_per_identity: u64,
-    pub email_rows_before: u64,
-    pub email_rows_after: u64,
+    pub observations: i64,
+    pub populated: i64,
+    pub missing: i64,
+    pub gmail_identities: i64,
+    pub duplicate_identity_groups: i64,
+    pub rows_removed: i64,
+    pub blob_conflict_groups: i64,
+    pub keyword_conflict_groups: i64,
+    pub max_rows_per_identity: i64,
+    pub email_rows_before: i64,
+    pub email_rows_after: i64,
 }
 
 impl GmailConsolidationAnalysis {
@@ -43,18 +41,18 @@ pub struct GmailConsolidation {
 /// missing Gmail identity, differing RFC822 blobs, or differing keyword state
 /// within one Gmail identity as blockers for an automatic apply.
 pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailConsolidationAnalysis> {
-    let observations: u64 = conn.query_row(
+    let observations: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sync_id_imap WHERE type_name = 'email'",
         [],
         |r| r.get(0),
     )?;
-    let populated: u64 = conn.query_row(
+    let populated: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sync_id_imap
          WHERE type_name = 'email' AND gmail_msgid IS NOT NULL",
         [],
         |r| r.get(0),
     )?;
-    let gmail_identities: u64 = conn.query_row(
+    let gmail_identities: i64 = conn.query_row(
         "SELECT COUNT(*) FROM (
              SELECT source_id, gmail_msgid
              FROM sync_id_imap
@@ -64,9 +62,9 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         [],
         |r| r.get(0),
     )?;
-    let email_rows_before: u64 = conn.query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0))?;
+    let email_rows_before: i64 = conn.query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0))?;
 
-    let (duplicate_identity_groups, rows_removed, max_rows_per_identity): (u64, u64, u64) = conn
+    let (duplicate_identity_groups, rows_removed, max_rows_per_identity): (i64, i64, i64) = conn
         .query_row(
             "WITH groups AS (
                  SELECT source_id, gmail_msgid, COUNT(DISTINCT local_id) AS n
@@ -83,7 +81,7 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
 
-    let blob_conflict_groups: u64 = conn.query_row(
+    let blob_conflict_groups: i64 = conn.query_row(
         "SELECT COUNT(*) FROM (
              SELECT obs.source_id, obs.gmail_msgid
              FROM sync_id_imap obs
@@ -95,7 +93,7 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         [],
         |r| r.get(0),
     )?;
-    let keyword_conflict_groups: u64 = conn.query_row(
+    let keyword_conflict_groups: i64 = conn.query_row(
         "SELECT COUNT(*) FROM (
              SELECT obs.source_id, obs.gmail_msgid
              FROM sync_id_imap obs
@@ -108,7 +106,7 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         |r| r.get(0),
     )?;
 
-    let missing = observations.saturating_sub(populated);
+    let missing = observations - populated;
     Ok(GmailConsolidationAnalysis {
         observations,
         populated,
@@ -120,7 +118,7 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         keyword_conflict_groups,
         max_rows_per_identity,
         email_rows_before,
-        email_rows_after: email_rows_before.saturating_sub(rows_removed),
+        email_rows_after: email_rows_before - rows_removed,
     })
 }
 
