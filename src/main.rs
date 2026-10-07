@@ -106,7 +106,14 @@ fn run() -> i32 {
 }
 
 fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
-    let mut conn = match rusqlite::Connection::open(archive) {
+    let mut conn = match if apply {
+        rusqlite::Connection::open(archive)
+    } else {
+        rusqlite::Connection::open_with_flags(
+            archive,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+    } {
         Ok(conn) => conn,
         Err(err) => return fail(&Error::from(err)),
     };
