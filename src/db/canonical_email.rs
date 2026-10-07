@@ -64,11 +64,10 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         [],
         |r| r.get(0),
     )?;
-    let email_rows_before: u64 =
-        conn.query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0))?;
+    let email_rows_before: u64 = conn.query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0))?;
 
-    let (duplicate_identity_groups, rows_removed, max_rows_per_identity): (u64, u64, u64) =
-        conn.query_row(
+    let (duplicate_identity_groups, rows_removed, max_rows_per_identity): (u64, u64, u64) = conn
+        .query_row(
             "WITH groups AS (
                  SELECT source_id, gmail_msgid, COUNT(DISTINCT local_id) AS n
                  FROM sync_id_imap
@@ -295,7 +294,8 @@ mod tests {
         )
         .unwrap();
         crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100, Some(42)).unwrap();
-        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42)).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42))
+            .unwrap();
 
         let got = analyze_gmail_identities(&c).unwrap();
         assert_eq!(got.observations, 2);
@@ -349,10 +349,14 @@ mod tests {
         assert_eq!(got.groups, 1);
         assert_eq!(got.removed_rows, 1);
         assert_eq!(got.remapped_imap_observations, 1);
-        let count: i64 = c.query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0)).unwrap();
+        let count: i64 = c
+            .query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 1);
         let row: String = c
-            .query_row("SELECT mailbox_ids FROM emails WHERE id = 100", [], |r| r.get(0))
+            .query_row("SELECT mailbox_ids FROM emails WHERE id = 100", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(row, "[10,20]");
         assert_eq!(
