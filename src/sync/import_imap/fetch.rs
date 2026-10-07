@@ -9,6 +9,7 @@ use crate::imap::response::{Untagged, Value};
 #[derive(Debug, Default, Clone)]
 pub struct FetchAttrs {
     pub uid: Option<u32>,
+    pub gmail_msgid: Option<u64>,
     pub flags: Vec<String>,
     pub internaldate: Option<String>,
     pub size: Option<u64>,
@@ -25,6 +26,11 @@ pub fn extract(u: &Untagged) -> Option<FetchAttrs> {
             "UID" => {
                 if let Some(n) = value.as_number() {
                     out.uid = Some(n as u32);
+                }
+            }
+            "X-GM-MSGID" => {
+                if let Some(n) = value.as_number() {
+                    out.gmail_msgid = Some(n);
                 }
             }
             "FLAGS" => {
@@ -80,6 +86,7 @@ mod tests {
             b"* 1 FETCH (UID 42 FLAGS (\\Seen) INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 4242)\r\n",
         );
         assert_eq!(f.uid, Some(42));
+        assert_eq!(f.gmail_msgid, None);
         assert_eq!(f.flags, vec!["\\Seen"]);
         assert_eq!(
             f.internaldate.as_deref(),
@@ -87,6 +94,13 @@ mod tests {
         );
         assert_eq!(f.size, Some(4242));
         assert!(f.body.is_none());
+    }
+
+    #[test]
+    fn extracts_gmail_message_id() {
+        let f = parse_fetch(b"* 1 FETCH (UID 42 X-GM-MSGID 1794908265753564076 FLAGS (\\Seen))\r\n");
+        assert_eq!(f.uid, Some(42));
+        assert_eq!(f.gmail_msgid, Some(1794908265753564076));
     }
 
     #[test]
