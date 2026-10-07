@@ -454,6 +454,22 @@ fn run_into(
     }
 
     pool.shutdown();
+
+    if client.has_capability("X-GM-EXT-1") {
+        let coverage = db::imap_ids::gmail_identity_coverage(&conn, source_id)?;
+        log_at(
+            logger,
+            LEVEL_DEFAULT,
+            &format!(
+                "Gmail identity coverage: observations={} populated={} missing={} unique_x_gm_msgid={}",
+                coverage.observations,
+                coverage.populated,
+                coverage.missing,
+                coverage.identities
+            ),
+        );
+    }
+
     let _ = client.logout();
 
     *summary = Summary {
