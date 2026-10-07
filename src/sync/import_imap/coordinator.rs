@@ -1381,7 +1381,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(mailbox_ids, "[20]");
-        assert_eq!(db::imap_ids::email_observation_count(&c, sid, email_id).unwrap(), 1);
+        assert_eq!(
+            db::imap_ids::email_observation_count(&c, sid, email_id).unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -1391,15 +1394,7 @@ mod tests {
         {
             let tx = c.transaction().unwrap();
             remove_email_observation(&tx, sid, "INBOX", 1, 101, &mut counts).unwrap();
-            remove_email_observation(
-                &tx,
-                sid,
-                "[Gmail]/All Mail",
-                2,
-                202,
-                &mut counts,
-            )
-            .unwrap();
+            remove_email_observation(&tx, sid, "[Gmail]/All Mail", 2, 202, &mut counts).unwrap();
             tx.commit().unwrap();
         }
 
