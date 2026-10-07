@@ -138,11 +138,7 @@ pub fn consolidate_by_blob(conn: &mut Connection) -> rusqlite::Result<Consolidat
 
 fn json_array(raw: &str) -> rusqlite::Result<Vec<Value>> {
     serde_json::from_str::<Vec<Value>>(raw).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(e),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
     })
 }
 
