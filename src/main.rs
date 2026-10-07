@@ -171,7 +171,36 @@ fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
         ));
     }
 
-    let result = match canonical_email::consolidate_by_gmail_identity(&mut conn) {
+    let started = std::time::Instant::now();
+    let result = match canonical_email::consolidate_by_gmail_identity_with_progress(
+        &mut conn,
+        |completed, total, state| {
+            if completed == 0 {
+                println!("Gmail identity consolidation apply: groups_total={total}");
+                return;
+            }
+            let elapsed = started.elapsed().as_secs();
+            let percent = if total == 0 {
+                100.0
+            } else {
+                completed as f64 * 100.0 / total as f64
+            };
+            let eta = if completed > 0 {
+                elapsed
+                    .saturating_mul(total.saturating_sub(completed))
+                    / completed
+            } else {
+                0
+            };
+            println!(
+                "  progress groups={completed}/{total} ({percent:.1}%) removed_rows={} remapped_imap_observations={} elapsed={}s eta={}s",
+                state.removed_rows,
+                state.remapped_imap_observations,
+                elapsed,
+                eta
+            );
+        },
+    ) {
         Ok(result) => result,
         Err(err) => return fail(&Error::from(err)),
     };
