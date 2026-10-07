@@ -98,7 +98,8 @@ mod tests {
 
     #[test]
     fn extracts_gmail_message_id() {
-        let f = parse_fetch(b"* 1 FETCH (UID 42 X-GM-MSGID 1794908265753564076 FLAGS (\\Seen))\r\n");
+        let f =
+            parse_fetch(b"* 1 FETCH (UID 42 X-GM-MSGID 1794908265753564076 FLAGS (\\Seen))\r\n");
         assert_eq!(f.uid, Some(42));
         assert_eq!(f.gmail_msgid, Some(1794908265753564076));
     }
