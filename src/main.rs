@@ -208,7 +208,6 @@ fn report(summary: &Summary) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::open_gmail_consolidation_archive;
