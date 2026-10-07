@@ -105,6 +105,12 @@ mod tests {
     }
 
     #[test]
+    fn extracts_full_unsigned_gmail_message_id() {
+        let f = parse_fetch(b"* 1 FETCH (UID 42 X-GM-MSGID 18446744073709551615)\r\n");
+        assert_eq!(f.gmail_msgid, Some(u64::MAX));
+    }
+
+    #[test]
     fn extracts_body_literal_as_bytes() {
         let input = b"* 1 FETCH (UID 5 BODY[] {11}\r\nHello world)\r\n";
         let f = parse_fetch(input);
