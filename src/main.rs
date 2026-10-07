@@ -130,6 +130,10 @@ fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
         "  keyword_conflict_groups={}",
         analysis.keyword_conflict_groups
     );
+    println!(
+        "  multi_identity_local_rows={}",
+        analysis.multi_identity_local_rows
+    );
     println!("  max_rows_per_identity={}", analysis.max_rows_per_identity);
     println!("  email_rows_before={}", analysis.email_rows_before);
     println!("  email_rows_after={}", analysis.email_rows_after);
