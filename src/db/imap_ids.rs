@@ -127,8 +127,9 @@ pub fn email_observation_count(
         "SELECT COUNT(*) FROM sync_id_imap
          WHERE source_id = ?1 AND type_name = ?2 AND local_id = ?3",
         params![source_id, EMAIL, local_id],
-        |row| row.get(0),
+        |row| row.get::<_, i64>(0),
     )
+    .map(|count| count as u64)
 }
 
 pub fn email_folders_for_local(
