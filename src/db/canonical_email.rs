@@ -289,6 +289,8 @@ mod tests {
             [],
         )
         .unwrap();
+        crate::db::imap_ids::insert_mailbox(&c, sid, "INBOX", 10).unwrap();
+        crate::db::imap_ids::insert_mailbox(&c, sid, "[Gmail]/All Mail", 20).unwrap();
         let blob = crate::db::blobs::intern_blob(&c, b"same bytes").unwrap();
         c.execute(
             "INSERT INTO emails (id,blob_id,received_at,mailbox_ids,keywords,message_match)
