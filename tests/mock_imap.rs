@@ -1224,7 +1224,7 @@ fn coordinator_dispatches_to_multiple_worker_connections() {
         .iter()
         .find(|(k, _)| *k == "email")
         .unwrap();
-    assert_eq!(email.1.created, 8, "all 8 messages imported");
+    assert_eq!(email.1.created, 1, "duplicate RFC822 bodies canonicalized");
 
     assert!(
         WORKER_INVOCATIONS.load(Ordering::SeqCst) >= 1,
