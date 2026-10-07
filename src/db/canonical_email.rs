@@ -142,12 +142,34 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
 pub fn consolidate_by_gmail_identity(
     conn: &mut Connection,
 ) -> rusqlite::Result<GmailConsolidation> {
+    consolidate_by_gmail_identity_with_progress(conn, |_, _, _| {})
+}
+
+pub fn consolidate_by_gmail_identity_with_progress<F>(
+    conn: &mut Connection,
+    mut progress: F,
+) -> rusqlite::Result<GmailConsolidation>
+where
+    F: FnMut(u64, u64, &GmailConsolidation),
+{
     let analysis = analyze_gmail_identities(conn)?;
     if !analysis.safe_to_apply() {
         return Err(rusqlite::Error::InvalidQuery);
     }
 
     let tx = conn.transaction()?;
+
+    // These indexes match the consolidation hot-path predicates.  They are
+    // created inside the transaction so a failed/aborted apply leaves no
+    // schema change behind, while a successful apply keeps them for future
+    // maintenance.
+    tx.execute_batch(
+        "CREATE INDEX IF NOT EXISTS sync_id_takeout_email_local_idx
+             ON sync_id_takeout (local_id) WHERE type_name = 'email';
+         CREATE INDEX IF NOT EXISTS export_id_jmap_email_local_idx
+             ON export_id_jmap (local_id) WHERE type_name = 'email';",
+    )?;
+
     let groups: Vec<(i64, String)> = {
         let mut stmt = tx.prepare(
             "SELECT source_id, gmail_msgid
@@ -161,8 +183,10 @@ pub fn consolidate_by_gmail_identity(
             .collect::<Result<Vec<_>, _>>()?
     };
 
+    let total_groups = groups.len() as u64;
     let mut out = GmailConsolidation::default();
-    for (source_id, gmail_msgid) in groups {
+    progress(0, total_groups, &out);
+    for (group_index, (source_id, gmail_msgid)) in groups.into_iter().enumerate() {
         let ids: Vec<i64> = {
             let mut stmt = tx.prepare(
                 "SELECT DISTINCT local_id
@@ -230,7 +254,7 @@ pub fn consolidate_by_gmail_identity(
             out.removed_rows += 1;
         }
 
-        let mailboxes = observed_mailboxes(&tx, canonical)?;
+        let mailboxes = observed_mailboxes(&tx, source_id, canonical)?;
         let mailbox_json = serde_json::to_string(&mailboxes)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         tx.execute(
@@ -238,6 +262,10 @@ pub fn consolidate_by_gmail_identity(
             params![mailbox_json, canonical],
         )?;
         out.groups += 1;
+        let completed = group_index as u64 + 1;
+        if completed % 1000 == 0 || completed == total_groups {
+            progress(completed, total_groups, &out);
+        }
     }
 
     tx.commit()?;
@@ -279,7 +307,11 @@ fn keyword_conflict_groups(conn: &Connection) -> rusqlite::Result<i64> {
     Ok(groups.values().filter(|states| states.len() > 1).count() as i64)
 }
 
-fn observed_mailboxes(conn: &Connection, email_id: i64) -> rusqlite::Result<Vec<i64>> {
+fn observed_mailboxes(
+    conn: &Connection,
+    source_id: i64,
+    email_id: i64,
+) -> rusqlite::Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT mb.local_id
          FROM sync_id_imap obs
@@ -287,10 +319,12 @@ fn observed_mailboxes(conn: &Connection, email_id: i64) -> rusqlite::Result<Vec<
            ON mb.source_id = obs.source_id
           AND mb.type_name = 'mailbox'
           AND mb.folder = obs.folder
-         WHERE obs.type_name = 'email' AND obs.local_id = ?1
+         WHERE obs.source_id = ?1
+           AND obs.type_name = 'email'
+           AND obs.local_id = ?2
          ORDER BY mb.local_id",
     )?;
-    stmt.query_map(params![email_id], |r| r.get(0))?
+    stmt.query_map(params![source_id, email_id], |r| r.get(0))?
         .collect::<Result<Vec<_>, _>>()
 }
 
