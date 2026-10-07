@@ -132,7 +132,6 @@ pub fn consolidate_by_blob(conn: &mut Connection) -> rusqlite::Result<Consolidat
     Ok(out)
 }
 
-
 fn canonicalize_gmail_special_mailboxes(
     conn: &Connection,
     out: &mut Consolidation,
