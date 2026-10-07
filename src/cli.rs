@@ -50,6 +50,8 @@ enum Command {
     Export(Box<ExportArgs>),
     #[command(about = "Show the contents of a local archive (read-only)")]
     Inspect(Box<InspectArgs>),
+    #[command(about = "Analyze or apply Gmail X-GM-MSGID Email canonicalization")]
+    ConsolidateGmail(Box<ConsolidateGmailArgs>),
 }
 
 #[derive(Subcommand)]
@@ -381,6 +383,7 @@ struct InspectArgs {
 }
 
 pub enum Action {
+    ConsolidateGmail { archive: PathBuf, apply: bool },
     Import(CommonConfig, ImportConfig),
     ImportImap(CommonConfig, ImapImportConfig),
     ImportDav(CommonConfig, DavImportConfig),
@@ -516,6 +519,10 @@ impl Cli {
             Command::Import { source } => resolve_import(source),
             Command::Export(args) => resolve_export(*args),
             Command::Inspect(args) => resolve_inspect(*args),
+            Command::ConsolidateGmail(args) => Ok(Action::ConsolidateGmail {
+                archive: args.archive,
+                apply: args.apply,
+            }),
         }
     }
 }
@@ -879,6 +886,21 @@ fn resolve_export(args: ExportArgs) -> Result<Action, Error> {
             yes: args.yes,
         },
     ))
+}
+
+#[derive(Args)]
+struct ConsolidateGmailArgs {
+    #[arg(
+        long,
+        help = "Apply the conflict-free Gmail identity plan; without this flag the command is read-only"
+    )]
+    apply: bool,
+
+    #[arg(
+        value_name = "ARCHIVE",
+        help = "Local SQLite archive"
+    )]
+    archive: PathBuf,
 }
 
 fn resolve_inspect(args: InspectArgs) -> Result<Action, Error> {
