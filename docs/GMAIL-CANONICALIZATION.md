@@ -33,7 +33,9 @@ Backfill is intentionally narrow:
 vandelay consolidate-gmail ARCHIVE
 ```
 
-is read-only unless `--apply` is supplied. The analysis reports observation coverage, unique Gmail identities, duplicate identity groups, projected removed rows, blob conflicts, keyword conflicts, local rows spanning multiple Gmail identities, and before/after Email-row counts.
+is read-only unless `--apply` is supplied. Read-only analysis opens the SQLite archive with `mode=ro&immutable=1`; this permits analysis of Vandelay's WAL-mode archive through a strict read-only filesystem/container mount without creating SQLite sidecar files. Immutable mode assumes the database is stable/offline and must not be used against an archive that may be changing concurrently.
+
+The analysis reports observation coverage, unique Gmail identities, duplicate identity groups, projected removed rows, blob conflicts, keyword conflicts, local rows spanning multiple Gmail identities, and before/after Email-row counts.
 
 Automatic apply is blocked unless all tracked IMAP email observations have Gmail identity and there are no:
 
@@ -42,6 +44,28 @@ Automatic apply is blocked unless all tracked IMAP email observations have Gmail
 - local Email rows shared by multiple Gmail identities.
 
 The last condition is a structural safety invariant. A local row spanning two Gmail identities indicates prior unsafe adoption and must be investigated rather than silently consolidated.
+
+## Verified historical-archive findings
+
+A sanitized read-only preflight of the migration archive found complete Gmail-identity coverage and no keyword conflicts or local Email row spanning multiple Gmail identities. It nevertheless found 28 Gmail-identity groups containing differing RFC822 blobs, so the archive remains unsafe to apply automatically.
+
+Further read-only analysis found five content blobs referenced by separate local Email rows whose IMAP observations span two distinct `X-GM-MSGID` values. Each of those five blobs has one row with original Takeout provenance plus later IMAP-created rows. This is a distinct structural condition from one local Email row spanning multiple Gmail identities and explains why the existing `multi_identity_local_rows` check alone did not detect it.
+
+Content inspection of the conflict set also found a historical case where two genuinely different messages reused the same RFC `Message-ID`. This is direct evidence that RFC `Message-ID` is not safe as Gmail logical identity and supports the branch rule that `X-GM-MSGID` is authoritative.
+
+A cross-identity blob is not by itself proof of corruption: Gmail can in principle contain two logical messages with byte-identical RFC822 content. It is therefore a reconciliation/safety condition that must be understood before apply, not a reason to merge identities.
+
+The current migration archive must remain blocked from apply while these findings are being reconciled. A future analysis revision should report cross-identity blob groups explicitly and treat unresolved groups as an apply blocker.
+
+## Takeout provenance and forensic recovery
+
+The Takeout importer records `sync_id_takeout.source_obj_id` for email objects as the hexadecimal BLAKE3 hash of the parsed MBOX message contents. It is not an RFC `Message-ID`, Gmail message ID, or SHA-256 identifier.
+
+The Takeout MBOX parser retains message contents, including headers such as `X-GM-THRID`, in the stored RFC822 blob. The importer currently uses `X-Gmail-Labels` for mailbox/keyword classification but does not persist `X-GM-THRID` in a dedicated identity column. The MBOX envelope sender is parsed and retained by the parser, while the envelope date is used as the preferred internal/received date.
+
+The original Takeout source remains useful forensic evidence because its message-content hash provides exact Takeout provenance and its stored raw headers can be compared with authoritative Gmail IMAP metadata. `X-GM-THRID` is thread identity, not message identity, and must never substitute for `X-GM-MSGID`.
+
+Historical repair must not repeat weak RFC `Message-ID` matching. Exact blob/content equality may be used as provenance or correlation evidence, but never as the authority that declares two Gmail observations to be the same logical message.
 
 ## Apply behavior
 
@@ -82,10 +106,12 @@ The intended controlled repair sequence is:
 2. backfill `X-GM-MSGID` for existing tracked IMAP observations;
 3. verify complete identity coverage;
 4. run read-only consolidation analysis;
-5. inspect every blocker or anomaly;
-6. confirm a rollback checkpoint;
-7. apply canonicalization transactionally;
-8. run post-apply integrity checks;
-9. only then resume/validate normal synchronization and export behavior.
+5. inspect every blocker or anomaly, including cross-identity content;
+6. reconcile historical identity associations using authoritative Gmail identity plus preserved provenance;
+7. rerun analysis and require a clean safety report;
+8. confirm a rollback checkpoint;
+9. apply canonicalization transactionally;
+10. run post-apply integrity checks;
+11. only then resume/validate normal synchronization and export behavior.
 
 A small set of Takeout-specific untracked Spam artifacts was identified during investigation. That cleanup is separate from Gmail identity consolidation and must not be folded into canonicalization implicitly.
