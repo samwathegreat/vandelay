@@ -20,6 +20,7 @@ pub fn apply_schema(conn: &Connection) -> Result<(), OpenError> {
     tx.execute_batch(SCHEMA_SQL)?;
     ensure_calendar_events_data_type(&tx)?;
     ensure_graph_ids_accept_file_nodes(&tx)?;
+    ensure_imap_ids_allow_multiple_email_observations(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -68,6 +69,52 @@ fn ensure_graph_ids_accept_file_nodes(conn: &Connection) -> Result<(), OpenError
          DROP TABLE sync_id_exchange_graph_old;
          CREATE INDEX IF NOT EXISTS sync_id_exchange_graph_type_idx
              ON sync_id_exchange_graph (source_id, type_name);",
+    )?;
+    Ok(())
+}
+
+fn ensure_imap_ids_allow_multiple_email_observations(conn: &Connection) -> Result<(), OpenError> {
+    let sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sync_id_imap'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    let Some(sql) = sql else { return Ok(()) };
+
+    // v1.0.11 and earlier enforced one IMAP observation per local object.
+    // Canonical Email rows need many (folder, UIDVALIDITY, UID) observations
+    // to point at the same local Email while mailbox mappings stay one-to-one.
+    if !sql.contains("UNIQUE (source_id, type_name, local_id)") {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "DROP INDEX IF EXISTS sync_id_imap_folder_idx;
+         DROP INDEX IF EXISTS sync_id_imap_mailbox_local_idx;
+         DROP INDEX IF EXISTS sync_id_imap_email_local_idx;
+         ALTER TABLE sync_id_imap RENAME TO sync_id_imap_old;
+         CREATE TABLE sync_id_imap (
+             source_id    INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+             type_name    TEXT    NOT NULL CHECK (type_name IN ('mailbox','email')),
+             folder       TEXT    NOT NULL,
+             uidvalidity  INTEGER NOT NULL,
+             uid          INTEGER NOT NULL,
+             local_id     INTEGER NOT NULL,
+             PRIMARY KEY (source_id, type_name, folder, uidvalidity, uid)
+         );
+         INSERT INTO sync_id_imap
+             (source_id, type_name, folder, uidvalidity, uid, local_id)
+             SELECT source_id, type_name, folder, uidvalidity, uid, local_id
+             FROM sync_id_imap_old;
+         DROP TABLE sync_id_imap_old;
+         CREATE INDEX sync_id_imap_folder_idx
+             ON sync_id_imap (source_id, type_name, folder);
+         CREATE UNIQUE INDEX sync_id_imap_mailbox_local_idx
+             ON sync_id_imap (source_id, local_id) WHERE type_name = 'mailbox';
+         CREATE INDEX sync_id_imap_email_local_idx
+             ON sync_id_imap (source_id, local_id) WHERE type_name = 'email';",
     )?;
     Ok(())
 }
