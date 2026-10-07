@@ -324,7 +324,8 @@ mod tests {
         )
         .unwrap();
         crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100, Some(42)).unwrap();
-        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42)).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42))
+            .unwrap();
 
         let got = analyze_gmail_identities(&c).unwrap();
         assert_eq!(got.blob_conflict_groups, 1);
@@ -343,7 +344,8 @@ mod tests {
         )
         .unwrap();
         crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100, Some(42)).unwrap();
-        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42)).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42))
+            .unwrap();
 
         let got = consolidate_by_gmail_identity(&mut c).unwrap();
         assert_eq!(got.groups, 1);
