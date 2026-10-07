@@ -21,6 +21,7 @@ pub fn apply_schema(conn: &Connection) -> Result<(), OpenError> {
     ensure_calendar_events_data_type(&tx)?;
     ensure_graph_ids_accept_file_nodes(&tx)?;
     ensure_imap_ids_allow_multiple_email_observations(&tx)?;
+    ensure_imap_gmail_msgid(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -115,6 +116,20 @@ fn ensure_imap_ids_allow_multiple_email_observations(conn: &Connection) -> Resul
              ON sync_id_imap (source_id, local_id) WHERE type_name = 'mailbox';
          CREATE INDEX sync_id_imap_email_local_idx
              ON sync_id_imap (source_id, local_id) WHERE type_name = 'email';",
+    )?;
+    Ok(())
+}
+
+fn ensure_imap_gmail_msgid(conn: &Connection) -> Result<(), OpenError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(sync_id_imap)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let has_column = rows.filter_map(|r| r.ok()).any(|name| name == "gmail_msgid");
+    if !has_column {
+        conn.execute("ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid INTEGER", [])?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS sync_id_imap_gmail_msgid_idx ON sync_id_imap (source_id, gmail_msgid) WHERE type_name = 'email' AND gmail_msgid IS NOT NULL",
+        [],
     )?;
     Ok(())
 }
