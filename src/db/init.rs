@@ -128,7 +128,9 @@ fn ensure_imap_gmail_msgid(conn: &Connection) -> Result<(), OpenError> {
         conn.execute("ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid INTEGER", [])?;
     }
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS sync_id_imap_gmail_msgid_idx ON sync_id_imap (source_id, gmail_msgid) WHERE type_name = 'email' AND gmail_msgid IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS sync_id_imap_gmail_msgid_idx \
+         ON sync_id_imap (source_id, gmail_msgid) \
+         WHERE type_name = 'email' AND gmail_msgid IS NOT NULL",
         [],
     )?;
     Ok(())
