@@ -242,7 +242,14 @@ fn run_one_job(
     let folder = job.folder.clone();
     let uv = job.uidvalidity;
     let attrs: &[&str] = if job_gmail_ext(client) {
-        &["UID", "FLAGS", "X-GM-MSGID", "INTERNALDATE", "RFC822.SIZE", "BODY.PEEK[]"]
+        &[
+            "UID",
+            "FLAGS",
+            "X-GM-MSGID",
+            "INTERNALDATE",
+            "RFC822.SIZE",
+            "BODY.PEEK[]",
+        ]
     } else {
         &["UID", "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY.PEEK[]"]
     };
