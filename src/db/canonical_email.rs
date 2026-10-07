@@ -25,15 +25,13 @@ pub struct Consolidation {
 /// callers can checkpoint a real archive before changing its logical model.
 pub fn consolidate_by_blob(conn: &mut Connection) -> rusqlite::Result<Consolidation> {
     let tx = conn.transaction()?;
-    let mut groups = Vec::new();
-    {
+    let groups = {
         let mut stmt = tx.prepare(
             "SELECT blob_id FROM emails GROUP BY blob_id HAVING COUNT(*) > 1 ORDER BY blob_id",
         )?;
-        groups = stmt
-            .query_map([], |row| row.get::<_, i64>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-    }
+        stmt.query_map([], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
 
     let mut out = Consolidation::default();
     for blob_id in groups {
