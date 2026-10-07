@@ -224,6 +224,10 @@ fn connect_and_auth(args: &WorkerArgs) -> Result<ImapClient, ImapError> {
     Ok(client)
 }
 
+fn job_gmail_ext(client: &ImapClient) -> bool {
+    client.has_capability("X-GM-EXT-1")
+}
+
 fn run_one_job(
     client: &mut ImapClient,
     current_folder: &mut Option<String>,
@@ -237,11 +241,13 @@ fn run_one_job(
     let set = command::format_uid_set(&job.uids, true);
     let folder = job.folder.clone();
     let uv = job.uidvalidity;
+    let attrs: &[&str] = if job_gmail_ext(client) {
+        &["UID", "FLAGS", "X-GM-MSGID", "INTERNALDATE", "RFC822.SIZE", "BODY.PEEK[]"]
+    } else {
+        &["UID", "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY.PEEK[]"]
+    };
     client.run_streamed(
-        &command::uid_fetch(
-            &set,
-            &["UID", "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY.PEEK[]"],
-        ),
+        &command::uid_fetch(&set, attrs),
         |u| {
             if let Untagged::Fetch { .. } = &u
                 && let Some(attrs) = super::fetch::extract(&u)
