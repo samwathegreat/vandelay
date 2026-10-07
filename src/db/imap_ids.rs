@@ -118,6 +118,38 @@ pub fn email_uids_in_folder(
     Ok(map)
 }
 
+pub fn email_observation_count(
+    conn: &Connection,
+    source_id: i64,
+    local_id: i64,
+) -> Result<u64, rusqlite::Error> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_id_imap
+         WHERE source_id = ?1 AND type_name = ?2 AND local_id = ?3",
+        params![source_id, EMAIL, local_id],
+        |row| row.get(0),
+    )
+}
+
+pub fn email_folders_for_local(
+    conn: &Connection,
+    source_id: i64,
+    local_id: i64,
+) -> Result<HashSet<String>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT folder FROM sync_id_imap
+         WHERE source_id = ?1 AND type_name = ?2 AND local_id = ?3",
+    )?;
+    let rows = stmt.query_map(params![source_id, EMAIL, local_id], |row| {
+        row.get::<_, String>(0)
+    })?;
+    let mut out = HashSet::new();
+    for row in rows {
+        out.insert(row?);
+    }
+    Ok(out)
+}
+
 pub fn delete_mailbox(
     conn: &Connection,
     source_id: i64,
@@ -250,6 +282,24 @@ mod tests {
         let folders = folders_with_emails(&c, sid).unwrap();
         assert!(folders.contains("INBOX"));
         assert!(folders.contains("Sent"));
+    }
+
+    #[test]
+    fn one_email_can_have_many_imap_observations() {
+        let (c, sid) = setup();
+        insert_email(&c, sid, "INBOX", 1, 10, 42).unwrap();
+        insert_email(&c, sid, "[Gmail]/All Mail", 2, 20, 42).unwrap();
+        insert_email(&c, sid, "Project", 3, 30, 42).unwrap();
+
+        assert_eq!(email_observation_count(&c, sid, 42).unwrap(), 3);
+        let folders = email_folders_for_local(&c, sid, 42).unwrap();
+        assert_eq!(folders.len(), 3);
+        assert!(folders.contains("INBOX"));
+        assert!(folders.contains("[Gmail]/All Mail"));
+        assert!(folders.contains("Project"));
+
+        delete_email(&c, sid, "INBOX", 1, 10).unwrap();
+        assert_eq!(email_observation_count(&c, sid, 42).unwrap(), 2);
     }
 
     #[test]
