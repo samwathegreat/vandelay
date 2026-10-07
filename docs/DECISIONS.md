@@ -36,9 +36,9 @@ This file records decisions that are easy to lose when only preserved in chat hi
 
 ### Non-Gmail compatibility is not a current constraint
 
-**Decision:** This branch may prioritize Gmail correctness even if doing so limits generic IMAP behavior.
+**Decision:** IMAP ingestion on this branch requires `X-GM-EXT-1` and `X-GM-MSGID`. Non-Gmail IMAP servers are rejected. Blob equality is not an allowed IMAP identity fallback.
 
-**Reason:** The present project is a Gmail archival system. General non-Gmail support can be reconsidered later rather than weakening Gmail semantics now.
+**Reason:** The present project is a Gmail archival system. General non-Gmail support can be reconsidered later rather than weakening Gmail semantics now. Blob IDs remain valid content-addressed storage references, but not logical Gmail message identity.
 
 ### Public documentation is sanitized
 
