@@ -246,19 +246,16 @@ fn run_one_job(
     } else {
         &["UID", "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY.PEEK[]"]
     };
-    client.run_streamed(
-        &command::uid_fetch(&set, attrs),
-        |u| {
-            if let Untagged::Fetch { .. } = &u
-                && let Some(attrs) = super::fetch::extract(&u)
-            {
-                let _ = event_tx.send(FetchEvent::Item {
-                    folder: folder.clone(),
-                    uidvalidity: uv,
-                    attrs,
-                });
-            }
-        },
-    )?;
+    client.run_streamed(&command::uid_fetch(&set, attrs), |u| {
+        if let Untagged::Fetch { .. } = &u
+            && let Some(attrs) = super::fetch::extract(&u)
+        {
+            let _ = event_tx.send(FetchEvent::Item {
+                folder: folder.clone(),
+                uidvalidity: uv,
+                attrs,
+            });
+        }
+    })?;
     Ok(())
 }
