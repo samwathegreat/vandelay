@@ -1493,13 +1493,14 @@ mod tests {
         assert_eq!(counts.created, 0);
         assert_eq!(counts.updated, 1);
         let canonical: (String, Option<String>) = c
-            .query_row(
-                "SELECT name, role FROM mailboxes WHERE id = 2",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+            .query_row("SELECT name, role FROM mailboxes WHERE id = 2", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
             .unwrap();
-        assert_eq!(canonical, ("Spamverdacht".to_owned(), Some("junk".to_owned())));
+        assert_eq!(
+            canonical,
+            ("Spamverdacht".to_owned(), Some("junk".to_owned()))
+        );
     }
 
     #[test]
