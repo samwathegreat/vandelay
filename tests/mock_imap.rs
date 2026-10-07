@@ -546,11 +546,16 @@ fn control_script_present_flags(
         conn.write_line(&format!("{tag} OK SEARCH done"))?;
         let (tag, cmd) = conn.read_command()?;
         assert!(
-            cmd.starts_with("UID FETCH") && cmd.contains("(UID FLAGS)") && !cmd.contains("BODY"),
+            cmd.starts_with("UID FETCH")
+                && cmd.contains("(UID FLAGS X-GM-MSGID)")
+                && !cmd.contains("BODY"),
             "expected body-less flags fetch on the present set, got {cmd}"
         );
         for (uid, flags) in flags_reply {
-            conn.write_line(&format!("* {uid} FETCH (UID {uid} FLAGS ({flags}))"))?;
+            conn.write_line(&format!(
+                "* {uid} FETCH (UID {uid} FLAGS ({flags}) X-GM-MSGID {})",
+                1_000_000_u64 + u64::from(*uid)
+            ))?;
         }
         conn.write_line(&format!("{tag} OK FETCH done"))?;
         drain_until_close(conn);
@@ -783,7 +788,7 @@ fn coordinator_imports_message_despite_size_mismatch() {
         write_select(conn, &tag, 100, 2, 1)?;
         let (tag, _) = conn.read_command()?;
         let header = format!(
-            "* 1 FETCH (UID 1 FLAGS () INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE 9999 BODY[] {{{}}}\r\n",
+            "* 1 FETCH (UID 1 X-GM-MSGID 1000001 FLAGS () INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE 9999 BODY[] {{{}}}\r\n",
             MSG_BODY.len()
         );
         conn.write_raw(header.as_bytes())?;
@@ -862,7 +867,7 @@ fn coordinator_present_run_is_convergent() {
     scripts.extend(single_inbox_scripts(100, 2, MSG_BODY));
 
     scripts.push(control_script_present_flags(100, 2, &[1], &[(1, "\\Seen")]));
-    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"));
+    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"));
     let server = MockImap::start_scripts(scripts);
     let archive = tempfile("converge");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("first import");
@@ -893,7 +898,7 @@ fn coordinator_present_flag_change_updates_keywords() {
         &[1],
         &[(1, "\\Seen \\Flagged")],
     ));
-    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"));
+    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"));
     let server = MockImap::start_scripts(scripts);
     let archive = tempfile("flagupdate");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("first import");
@@ -930,7 +935,7 @@ fn coordinator_present_newly_deleted_is_left_intact() {
         &[1],
         &[(1, "\\Seen \\Deleted")],
     ));
-    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"));
+    scripts.push(worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"));
     let server = MockImap::start_scripts(scripts);
     let archive = tempfile("presentdeleted");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("first import");
@@ -964,7 +969,7 @@ fn coordinator_special_use_drives_role() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         auth_preamble(
             conn,
-            "IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+ AUTH=PLAIN X-GM-EXT-1",
         )?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.contains("RETURN (SPECIAL-USE SUBSCRIBED)"));
@@ -984,7 +989,7 @@ fn coordinator_special_use_drives_role() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+"),
+        worker_idle_script("IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+ X-GM-EXT-1"),
     ]);
     let archive = tempfile("specialuse");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("import");
@@ -999,7 +1004,7 @@ fn coordinator_omits_special_use_when_unadvertised() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         auth_preamble(
             conn,
-            "IMAP4rev2 LIST-EXTENDED LIST-STATUS LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 LIST-EXTENDED LIST-STATUS LITERAL+ AUTH=PLAIN X-GM-EXT-1",
         )?;
         let (tag, cmd) = conn.read_command()?;
         if cmd.contains("SPECIAL-USE") {
@@ -1020,7 +1025,7 @@ fn coordinator_omits_special_use_when_unadvertised() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LIST-EXTENDED LIST-STATUS LITERAL+"),
+        worker_idle_script("IMAP4rev2 LIST-EXTENDED LIST-STATUS LITERAL+ X-GM-EXT-1"),
     ]);
     let archive = tempfile("nospecialuse");
     run_import(&server, "alice", archive.clone(), |_| {})
@@ -1039,7 +1044,7 @@ fn coordinator_skips_deleted_messages_by_default() {
         write_select(conn, &tag, 100, 3, 2)?;
         let (tag, _) = conn.read_command()?;
         let h1 = format!(
-            "* 1 FETCH (UID 1 FLAGS (\\Seen) INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
+            "* 1 FETCH (UID 1 X-GM-MSGID 1000001 FLAGS (\\Seen) INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
             MSG_BODY.len(),
             MSG_BODY.len()
         );
@@ -1047,7 +1052,7 @@ fn coordinator_skips_deleted_messages_by_default() {
         conn.write_raw(MSG_BODY)?;
         conn.write_raw(b")\r\n")?;
         let h2 = format!(
-            "* 2 FETCH (UID 2 FLAGS (\\Deleted) INTERNALDATE \"13-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
+            "* 2 FETCH (UID 2 X-GM-MSGID 1000002 FLAGS (\\Deleted) INTERNALDATE \"13-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
             MSG_BODY.len(),
             MSG_BODY.len()
         );
@@ -1083,7 +1088,7 @@ fn coordinator_source_change_detected_on_different_url() {
     });
     let server1 = MockImap::start_scripts(vec![
         control1,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("srcchange");
     run_import(&server1, "alice", archive.clone(), |_| {}).expect("first");
@@ -1226,7 +1231,10 @@ fn coordinator_dispatches_to_multiple_worker_connections() {
         .iter()
         .find(|(k, _)| *k == "email")
         .unwrap();
-    assert_eq!(email.1.created, 1, "duplicate RFC822 bodies canonicalized");
+    assert_eq!(
+        email.1.created, 8,
+        "distinct Gmail identities remain distinct even when RFC822 bodies are identical"
+    );
 
     assert!(
         WORKER_INVOCATIONS.load(Ordering::SeqCst) >= 1,
@@ -1259,7 +1267,7 @@ fn coordinator_uses_list_status_to_skip_empty_folder_select() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         auth_preamble(
             conn,
-            "IMAP4rev2 LITERAL+ LIST-EXTENDED LIST-STATUS SPECIAL-USE AUTH=PLAIN",
+            "IMAP4rev2 LITERAL+ LIST-EXTENDED LIST-STATUS SPECIAL-USE AUTH=PLAIN X-GM-EXT-1",
         )?;
         let (tag, cmd) = conn.read_command()?;
         assert!(
@@ -1364,7 +1372,7 @@ fn coordinator_noops_between_folders() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("noop");
     let _ = run_import(&server, "alice", archive.clone(), |_| {}).expect("import");
@@ -1434,7 +1442,7 @@ fn coordinator_auth_plain_refused_then_login_succeeds() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         conn.write_line("* OK ready")?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.starts_with("AUTHENTICATE PLAIN"));
@@ -1443,7 +1451,7 @@ fn coordinator_auth_plain_refused_then_login_succeeds() {
         assert!(cmd.starts_with("LOGIN "));
         conn.write_line(&format!("{tag} OK welcome"))?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST () \"/\" \"INBOX\"")?;
@@ -1460,7 +1468,7 @@ fn coordinator_auth_plain_refused_then_login_succeeds() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("plain_to_login");
     let summary = run_import(&server, "alice", archive, |_| {}).expect("import");
@@ -1472,7 +1480,7 @@ fn coordinator_auth_plain_and_login_both_refused_aborts_run() {
     let server = MockImap::start(|conn| {
         conn.write_line("* OK ready")?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.starts_with("AUTHENTICATE PLAIN"));
@@ -1517,7 +1525,7 @@ fn coordinator_skips_folder_on_select_no() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("select_no");
     let summary = run_import(&server, "alice", archive, |_| {}).expect("import");
@@ -1539,7 +1547,7 @@ fn coordinator_include_deleted_imports_with_dollar_deleted_keyword() {
         write_select(conn, &tag, 100, 2, 1)?;
         let (tag, _) = conn.read_command()?;
         let header = format!(
-            "* 1 FETCH (UID 1 FLAGS (\\Deleted) INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
+            "* 1 FETCH (UID 1 X-GM-MSGID 1000001 FLAGS (\\Deleted) INTERNALDATE \"12-May-2025 10:00:00 +0000\" RFC822.SIZE {} BODY[] {{{}}}\r\n",
             MSG_BODY.len(),
             MSG_BODY.len()
         );
@@ -1588,7 +1596,7 @@ fn coordinator_noautomap_leaves_role_null_on_heuristic_match() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("noautomap");
     run_import(&server, "alice", archive.clone(), |c| {
@@ -1614,7 +1622,7 @@ fn coordinator_subscribed_only_excludes_unsubscribed() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         auth_preamble(
             conn,
-            "IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+ AUTH=PLAIN",
+            "IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+ AUTH=PLAIN X-GM-EXT-1",
         )?;
         let (tag, _) = conn.read_command()?;
         conn.write_line("* LIST (\\Subscribed) \"/\" \"INBOX\"")?;
@@ -1630,7 +1638,7 @@ fn coordinator_subscribed_only_excludes_unsubscribed() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LIST-EXTENDED SPECIAL-USE LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("subscribed_only");
     run_import(&server, "alice", archive.clone(), |c| {
@@ -1664,7 +1672,7 @@ fn coordinator_imap4rev1_only_works() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev1 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev1 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("imap4rev1");
     let summary = run_import(&server, "alice", archive, |_| {}).expect("import");
@@ -1680,13 +1688,13 @@ fn coordinator_enables_utf8_accept_when_advertised() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         conn.write_line("* OK ready")?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, cmd) = conn.read_command()?;
         assert!(cmd.starts_with("ENABLE"));
@@ -1708,7 +1716,7 @@ fn coordinator_enables_utf8_accept_when_advertised() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN ENABLE UTF8=ACCEPT X-GM-EXT-1"),
     ]);
     let archive = tempfile("utf8accept");
     run_import(&server, "alice", archive, |_| {}).expect("import");
@@ -1724,13 +1732,13 @@ fn coordinator_skips_enable_when_utf8_accept_absent() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
         conn.write_line("* OK ready")?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, cmd) = conn.read_command()?;
         if cmd.starts_with("ENABLE") {
@@ -1755,7 +1763,7 @@ fn coordinator_skips_enable_when_utf8_accept_absent() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("noutf8");
     run_import(&server, "alice", archive, |_| {}).expect("import");
@@ -1784,7 +1792,7 @@ fn coordinator_inbox_casefold_lowercase_input() {
     });
     let server = MockImap::start_scripts(vec![
         control,
-        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN"),
+        worker_idle_script("IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1"),
     ]);
     let archive = tempfile("inbox_casefold");
     run_import(&server, "alice", archive.clone(), |_| {}).expect("import");
@@ -1805,7 +1813,7 @@ fn coordinator_authenticationfailed_yields_exit2_connection_error() {
     let server = MockImap::start(|conn| {
         conn.write_line("* OK ready")?;
         let (tag, _) = conn.read_command()?;
-        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN")?;
+        write_capability(conn, "IMAP4rev2 LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
         conn.write_line(&format!("{tag} OK done"))?;
         let (tag, _) = conn.read_command()?;
         conn.write_line(&format!("{tag} NO [AUTHENTICATIONFAILED] bad creds"))?;
@@ -1924,7 +1932,7 @@ fn mutf7_server_gets_the_folder_name_back_as_mutf7() {
         Ok(())
     });
 
-    let server = MockImap::start_scripts(vec![control, worker_idle_script("IMAP4rev2 LITERAL+")]);
+    let server = MockImap::start_scripts(vec![control, worker_idle_script("IMAP4rev2 LITERAL+ X-GM-EXT-1")]);
     let archive = tempfile("mutf7_name");
     let summary = run_import(&server, "alice", archive.clone(), |_| {}).expect("import");
     let email = summary
