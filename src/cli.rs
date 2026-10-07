@@ -275,6 +275,12 @@ struct ImapImportArgs {
 
     #[arg(
         long,
+        help = "Only backfill X-GM-MSGID for existing tracked IMAP observations; do not reconcile mail, mailboxes, flags, or membership"
+    )]
+    gmail_identity_backfill: bool,
+
+    #[arg(
+        long,
         value_name = "N",
         help = "Parallel IMAP connections for body fetch (1..=8). Default: min(--threads, 8)"
     )]
@@ -800,6 +806,7 @@ fn resolve_imap_import(args: ImapImportArgs) -> Result<Action, Error> {
             automap: !args.noautomap,
             include_deleted: args.include_deleted,
             fetch_batch: args.fetch_batch,
+            gmail_identity_backfill: args.gmail_identity_backfill,
             imap_connections,
             allow_source_change: args.allow_source_change,
         },
