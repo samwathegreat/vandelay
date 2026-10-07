@@ -462,10 +462,7 @@ fn run_into(
             LEVEL_DEFAULT,
             &format!(
                 "Gmail identity coverage: observations={} populated={} missing={} unique_x_gm_msgid={}",
-                coverage.observations,
-                coverage.populated,
-                coverage.missing,
-                coverage.identities
+                coverage.observations, coverage.populated, coverage.missing, coverage.identities
             ),
         );
     }
