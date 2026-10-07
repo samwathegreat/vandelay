@@ -896,10 +896,7 @@ struct ConsolidateGmailArgs {
     )]
     apply: bool,
 
-    #[arg(
-        value_name = "ARCHIVE",
-        help = "Local SQLite archive"
-    )]
+    #[arg(value_name = "ARCHIVE", help = "Local SQLite archive")]
     archive: PathBuf,
 }
 
