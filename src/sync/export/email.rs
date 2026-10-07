@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 
 use super::common::{jid, target_query_get};
 use super::{Maps, Net, Plan, Uploader};
+use crate::db;
 use crate::error::Error;
 use crate::jmap::error::JmapError;
 use crate::jmap::request::{
@@ -223,10 +224,26 @@ fn export_one(
     }
     let item = import_item(blob, mids, build_keywords(row), &row.received_at);
     match send_single_import(net, &cid, item, logger) {
-        Ok(SingleImport::Created) => counts.created += 1,
+        Ok(SingleImport::Created(target_id)) => {
+            match db::export_ids::insert(
+                uploader.conn,
+                &net.account,
+                ObjectType::Email,
+                local_id,
+                &target_id,
+            ) {
+                Ok(()) => counts.created += 1,
+                Err(e) => {
+                    logger.warn(&format!(
+                        "Email/import {cid} created as {target_id} but export mapping could not be saved: {e}"
+                    ));
+                    counts.failed += 1;
+                }
+            }
+        },
         Ok(SingleImport::Skipped) => counts.skipped += 1,
         Ok(SingleImport::NotCreated { error_type, .. }) if error_type == "blobNotFound" => {
-            retry_after_reupload(net, uploader, maps, &cid, row, counts, logger);
+            retry_after_reupload(net, uploader, maps, local_id, &cid, row, counts, logger);
         }
         Ok(SingleImport::NotCreated { detail, .. }) => {
             logger.warn(&format!(
@@ -250,6 +267,7 @@ fn retry_after_reupload(
     net: &Net,
     uploader: &mut Uploader,
     maps: &Maps,
+    local_id: i64,
     cid: &str,
     row: &EmailRow,
     counts: &mut TypeCounts,
@@ -281,7 +299,23 @@ fn retry_after_reupload(
     };
     let item = import_item(blob, mids, build_keywords(row), &row.received_at);
     match send_single_import(net, cid, item, logger) {
-        Ok(SingleImport::Created) => counts.created += 1,
+        Ok(SingleImport::Created(target_id)) => {
+            match db::export_ids::insert(
+                uploader.conn,
+                &net.account,
+                ObjectType::Email,
+                local_id,
+                &target_id,
+            ) {
+                Ok(()) => counts.created += 1,
+                Err(e) => {
+                    logger.warn(&format!(
+                        "Email/import {cid} created as {target_id} but export mapping could not be saved: {e}"
+                    ));
+                    counts.failed += 1;
+                }
+            }
+        },
         Ok(SingleImport::Skipped) => counts.skipped += 1,
         Ok(SingleImport::NotCreated { detail, .. }) => {
             logger.warn(&format!(
@@ -302,7 +336,7 @@ fn retry_after_reupload(
 }
 
 enum SingleImport {
-    Created,
+    Created(String),
     Skipped,
     NotCreated { error_type: String, detail: String },
 }
@@ -351,13 +385,11 @@ fn interpret_import(mr: &MethodCall, cid: &str) -> Result<SingleImport, JmapErro
             detail: err.to_string(),
         });
     }
-    if mr
-        .args
-        .get("created")
-        .and_then(Value::as_object)
-        .is_some_and(|c| !c.is_empty())
+    if let Some(created) = mr.args.get("created").and_then(Value::as_object)
+        && let Some(obj) = created.get(cid)
+        && let Some(id) = obj.get("id").and_then(Value::as_str)
     {
-        return Ok(SingleImport::Created);
+        return Ok(SingleImport::Created(id.to_owned()));
     }
     Ok(SingleImport::NotCreated {
         error_type: String::new(),
