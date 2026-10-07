@@ -192,10 +192,7 @@ fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
             };
             println!(
                 "  progress groups={completed}/{total} ({percent:.1}%) removed_rows={} remapped_imap_observations={} elapsed={}s eta={}s",
-                state.removed_rows,
-                state.remapped_imap_observations,
-                elapsed,
-                eta
+                state.removed_rows, state.remapped_imap_observations, elapsed, eta
             );
         },
     ) {
