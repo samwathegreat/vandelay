@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 use serde_json::Value;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -167,8 +167,11 @@ mod tests {
             "a",
         )
         .unwrap();
-        c.execute("INSERT INTO mailboxes (id,name) VALUES (10,'INBOX'),(20,'All Mail')", [])
-            .unwrap();
+        c.execute(
+            "INSERT INTO mailboxes (id,name) VALUES (10,'INBOX'),(20,'All Mail')",
+            [],
+        )
+        .unwrap();
         let blob = crate::db::blobs::intern_blob(&c, b"same bytes").unwrap();
         c.execute(
             "INSERT INTO emails (id,blob_id,received_at,mailbox_ids,keywords,message_match)
@@ -197,7 +200,9 @@ mod tests {
             .unwrap();
         assert_eq!(row.0, "[10,20]");
         assert_eq!(row.1, "[\"$flagged\",\"$seen\"]");
-        let count: i64 = c.query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0)).unwrap();
+        let count: i64 = c
+            .query_row("SELECT COUNT(*) FROM emails", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 1);
     }
 }
