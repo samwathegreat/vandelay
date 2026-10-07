@@ -1446,6 +1446,63 @@ mod tests {
     }
 
     #[test]
+    fn existing_localized_special_folder_repairs_to_canonical_role_mailbox() {
+        use crate::db::init;
+        use crate::db::sources::{SourceKey, upsert_source};
+
+        let mut c = Connection::open_in_memory().unwrap();
+        init::apply_schema(&c).unwrap();
+        let sid = upsert_source(
+            &c,
+            &SourceKey {
+                kind: "imap".to_owned(),
+                session_url: "imaps://host:993".to_owned(),
+                account_id: "alice".to_owned(),
+            },
+            None,
+            "alice",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO mailboxes (id, name, role) VALUES
+             (2, 'Spam', 'junk'),
+             (57, 'Spamverdacht', NULL)",
+            [],
+        )
+        .unwrap();
+        db::imap_ids::insert_mailbox(&c, sid, "[Google Mail]/Spamverdacht", 57).unwrap();
+
+        let folders = vec![ResolvedFolder {
+            name: "[Google Mail]/Spamverdacht".to_owned(),
+            wire_name: "[Google Mail]/Spamverdacht".to_owned(),
+            leaf: "Spamverdacht".to_owned(),
+            parent_path: Some("[Google Mail]".to_owned()),
+            delimiter: Some('/'),
+            role: Some("junk"),
+            subscribed: true,
+            status: None,
+        }];
+        let mut counts = TypeCounts::default();
+        upsert_mailboxes(&mut c, sid, &folders, &mut counts).unwrap();
+
+        assert_eq!(
+            db::imap_ids::local_for_mailbox(&c, sid, "[Google Mail]/Spamverdacht").unwrap(),
+            Some(2),
+            "SPECIAL-USE junk semantics must win over the localized folder name"
+        );
+        assert_eq!(counts.created, 0);
+        assert_eq!(counts.updated, 1);
+        let canonical: (String, Option<String>) = c
+            .query_row(
+                "SELECT name, role FROM mailboxes WHERE id = 2",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(canonical, ("Spamverdacht".to_owned(), Some("junk".to_owned())));
+    }
+
+    #[test]
     fn vanished_observation_recomputes_membership_without_deleting_email() {
         let (mut c, sid, email_id) = canonical_test_db();
         let mut counts = TypeCounts::default();
