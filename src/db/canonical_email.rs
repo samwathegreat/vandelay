@@ -2,6 +2,8 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use rusqlite::{Connection, params};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -98,18 +100,7 @@ pub fn analyze_gmail_identities(conn: &Connection) -> rusqlite::Result<GmailCons
         [],
         |r| r.get(0),
     )?;
-    let keyword_conflict_groups: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM (
-             SELECT obs.source_id, obs.gmail_msgid
-             FROM sync_id_imap obs
-             JOIN emails e ON e.id = obs.local_id
-             WHERE obs.type_name = 'email' AND obs.gmail_msgid IS NOT NULL
-             GROUP BY obs.source_id, obs.gmail_msgid
-             HAVING COUNT(DISTINCT e.keywords) > 1
-         )",
-        [],
-        |r| r.get(0),
-    )?;
+    let keyword_conflict_groups = keyword_conflict_groups(conn)?;
 
     let multi_identity_local_rows: i64 = conn.query_row(
         "SELECT COUNT(*) FROM (
@@ -253,6 +244,41 @@ pub fn consolidate_by_gmail_identity(
     Ok(out)
 }
 
+fn keyword_conflict_groups(conn: &Connection) -> rusqlite::Result<i64> {
+    let mut stmt = conn.prepare(
+        "SELECT obs.source_id, obs.gmail_msgid, e.keywords
+         FROM sync_id_imap obs
+         JOIN emails e ON e.id = obs.local_id
+         WHERE obs.type_name = 'email' AND obs.gmail_msgid IS NOT NULL
+         ORDER BY obs.source_id, obs.gmail_msgid, obs.local_id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+
+    let mut groups: BTreeMap<(i64, String), BTreeSet<Vec<String>>> = BTreeMap::new();
+    for row in rows {
+        let (source_id, gmail_msgid, keywords_json) = row?;
+        let keywords: Vec<String> = serde_json::from_str(&keywords_json).unwrap_or_default();
+        let normalized: Vec<String> = keywords
+            .into_iter()
+            .map(|keyword| keyword.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        groups
+            .entry((source_id, gmail_msgid))
+            .or_default()
+            .insert(normalized);
+    }
+
+    Ok(groups.values().filter(|states| states.len() > 1).count() as i64)
+}
+
 fn observed_mailboxes(conn: &Connection, email_id: i64) -> rusqlite::Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT mb.local_id
@@ -326,6 +352,46 @@ mod tests {
         assert_eq!(got.email_rows_before, 2);
         assert_eq!(got.email_rows_after, 1);
         assert!(got.safe_to_apply());
+    }
+
+    #[test]
+    fn analysis_treats_reordered_keywords_as_equivalent() {
+        let (c, sid) = fixture();
+        let blob = crate::db::blobs::intern_blob(&c, b"same bytes").unwrap();
+        c.execute(
+            "INSERT INTO emails (id,blob_id,received_at,mailbox_ids,keywords,message_match)
+             VALUES (100,?1,'2026-01-01Z','[10]','[\"$seen\",\"$flagged\"]','{}'),
+                    (200,?1,'2026-01-01Z','[20]','[\"$flagged\",\"$seen\"]','{}')",
+            params![blob],
+        )
+        .unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100, Some(42)).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42))
+            .unwrap();
+
+        let got = analyze_gmail_identities(&c).unwrap();
+        assert_eq!(got.keyword_conflict_groups, 0);
+        assert!(got.safe_to_apply());
+    }
+
+    #[test]
+    fn analysis_blocks_genuinely_different_keyword_sets() {
+        let (c, sid) = fixture();
+        let blob = crate::db::blobs::intern_blob(&c, b"same bytes").unwrap();
+        c.execute(
+            "INSERT INTO emails (id,blob_id,received_at,mailbox_ids,keywords,message_match)
+             VALUES (100,?1,'2026-01-01Z','[10]','[\"$seen\"]','{}'),
+                    (200,?1,'2026-01-01Z','[20]','[\"$seen\",\"$flagged\"]','{}')",
+            params![blob],
+        )
+        .unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "INBOX", 1, 1, 100, Some(42)).unwrap();
+        crate::db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 2, 200, Some(42))
+            .unwrap();
+
+        let got = analyze_gmail_identities(&c).unwrap();
+        assert_eq!(got.keyword_conflict_groups, 1);
+        assert!(!got.safe_to_apply());
     }
 
     #[test]
