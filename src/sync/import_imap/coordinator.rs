@@ -1325,6 +1325,95 @@ fn dry_run_summary(
 mod tests {
     use super::*;
 
+    fn canonical_test_db() -> (Connection, i64, i64) {
+        use crate::db::init;
+        use crate::db::sources::{SourceKey, upsert_source};
+
+        let c = Connection::open_in_memory().unwrap();
+        init::apply_schema(&c).unwrap();
+        let sid = upsert_source(
+            &c,
+            &SourceKey {
+                kind: "imap".to_owned(),
+                session_url: "imaps://host:993".to_owned(),
+                account_id: "alice".to_owned(),
+            },
+            None,
+            "alice",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO mailboxes (id, name) VALUES (10, 'INBOX'), (20, 'All Mail')",
+            [],
+        )
+        .unwrap();
+        db::imap_ids::insert_mailbox(&c, sid, "INBOX", 10).unwrap();
+        db::imap_ids::insert_mailbox(&c, sid, "[Gmail]/All Mail", 20).unwrap();
+        let blob_id = db::blobs::intern_blob(&c, b"canonical-test-message").unwrap();
+        c.execute(
+            "INSERT INTO emails
+             (blob_id, received_at, mailbox_ids, keywords, message_match)
+             VALUES (?1, '2026-10-07T00:00:00Z', '[10,20]', '[]', '{}')",
+            params![blob_id],
+        )
+        .unwrap();
+        let email_id = c.last_insert_rowid();
+        db::imap_ids::insert_email(&c, sid, "INBOX", 1, 101, email_id).unwrap();
+        db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 202, email_id).unwrap();
+        (c, sid, email_id)
+    }
+
+    #[test]
+    fn vanished_observation_recomputes_membership_without_deleting_email() {
+        let (mut c, sid, email_id) = canonical_test_db();
+        let mut counts = TypeCounts::default();
+        {
+            let tx = c.transaction().unwrap();
+            remove_email_observation(&tx, sid, "INBOX", 1, 101, &mut counts).unwrap();
+            tx.commit().unwrap();
+        }
+
+        let mailbox_ids: String = c
+            .query_row(
+                "SELECT mailbox_ids FROM emails WHERE id = ?1",
+                params![email_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(mailbox_ids, "[20]");
+        assert_eq!(db::imap_ids::email_observation_count(&c, sid, email_id).unwrap(), 1);
+    }
+
+    #[test]
+    fn final_vanished_observation_deletes_canonical_email_in_true_mirror_mode() {
+        let (mut c, sid, email_id) = canonical_test_db();
+        let mut counts = TypeCounts::default();
+        {
+            let tx = c.transaction().unwrap();
+            remove_email_observation(&tx, sid, "INBOX", 1, 101, &mut counts).unwrap();
+            remove_email_observation(
+                &tx,
+                sid,
+                "[Gmail]/All Mail",
+                2,
+                202,
+                &mut counts,
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        let exists: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM emails WHERE id = ?1",
+                params![email_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0);
+        assert_eq!(counts.deleted, 1);
+    }
+
     #[test]
     fn parse_endpoint_imaps_defaults_to_993() {
         let e = parse_endpoint("imaps://mail.example.com").unwrap();
