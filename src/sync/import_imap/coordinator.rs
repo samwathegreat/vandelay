@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crossbeam_channel::RecvTimeoutError;
 use regex::Regex;
@@ -195,6 +195,7 @@ pub struct ImapImportConfig {
     pub automap: bool,
     pub include_deleted: bool,
     pub fetch_batch: usize,
+    pub gmail_identity_backfill: bool,
     pub imap_connections: usize,
     pub allow_source_change: bool,
 }
@@ -299,7 +300,14 @@ fn run_into(
              re-run with --allow-source-change or use a fresh archive"
         )));
     }
-    let source_id = if common.dry_run {
+    let source_id = if config.gmail_identity_backfill {
+        db::sources::find_source(&conn, &source_key)?.ok_or_else(|| {
+            Error::Usage(
+                "Gmail identity backfill requires an existing matching IMAP source in the archive"
+                    .to_owned(),
+            )
+        })?
+    } else if common.dry_run {
         -1
     } else {
         db::sources::upsert_source(&conn, &source_key, Some(&account_id), &account_id)?
@@ -359,6 +367,55 @@ fn run_into(
     };
     let mut resolved = apply_filters(discovered, &filters);
     sort_by_depth(&mut resolved);
+
+    if config.gmail_identity_backfill {
+        if common.dry_run {
+            return Err(Error::Usage(
+                "--gmail-identity-backfill cannot be combined with --dry-run".to_owned(),
+            ));
+        }
+        if !client.has_capability("X-GM-EXT-1") {
+            return Err(Error::Usage(
+                "--gmail-identity-backfill requires an IMAP server advertising X-GM-EXT-1"
+                    .to_owned(),
+            ));
+        }
+        let updated = backfill_gmail_identity(
+            &mut conn,
+            &mut client,
+            &control_ctx,
+            &resolved,
+            source_id,
+            config.fetch_batch.max(1),
+            logger,
+        )?;
+        let coverage = db::imap_ids::gmail_identity_coverage(&conn, source_id)?;
+        log_at(
+            logger,
+            LEVEL_DEFAULT,
+            &format!(
+                "Gmail identity backfill: updated={} observations={} populated={} missing={} unique_x_gm_msgid={}",
+                updated,
+                coverage.observations,
+                coverage.populated,
+                coverage.missing,
+                coverage.identities
+            ),
+        );
+        let _ = client.logout();
+        *summary = Summary {
+            per_type: vec![(
+                "email",
+                TypeCounts {
+                    updated,
+                    ..TypeCounts::default()
+                },
+            )],
+            retries_observed: backoff.total_retries(),
+            retry_after_sleeps: backoff.transient_retries() as u64,
+        };
+        return Ok(());
+    }
 
     if common.dry_run {
         let existing_source = db::sources::find_source(&conn, &source_key)?;
@@ -475,6 +532,106 @@ fn run_into(
         retry_after_sleeps: backoff.transient_retries() as u64,
     };
     Ok(())
+}
+
+fn backfill_gmail_identity(
+    conn: &mut Connection,
+    client: &mut ImapClient,
+    control_ctx: &ControlCtx,
+    folders: &[ResolvedFolder],
+    source_id: i64,
+    fetch_batch: usize,
+    logger: Logger,
+) -> Result<u64, Error> {
+    let mut tracked: BTreeMap<(String, u32), Vec<u32>> = BTreeMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT folder, uidvalidity, uid FROM sync_id_imap \
+             WHERE source_id = ?1 AND type_name = ?2 AND gmail_msgid IS NULL \
+             ORDER BY folder, uidvalidity, uid",
+        )?;
+        let rows = stmt.query_map(params![source_id, EMAIL_TYPE], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, u32>(1)?,
+                row.get::<_, u32>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (folder, uidvalidity, uid) = row?;
+            tracked.entry((folder, uidvalidity)).or_default().push(uid);
+        }
+    }
+
+    let by_name: HashMap<&str, &ResolvedFolder> =
+        folders.iter().map(|folder| (folder.name.as_str(), folder)).collect();
+    let mut updated = 0u64;
+    for ((folder_name, expected_uidvalidity), uids) in tracked {
+        let Some(folder) = by_name.get(folder_name.as_str()).copied() else {
+            log_at(
+                logger,
+                LEVEL_DEFAULT,
+                &format!(
+                    "Gmail identity backfill: tracked folder {:?} is not present in the filtered server listing; left unchanged",
+                    folder_name
+                ),
+            );
+            continue;
+        };
+        let selected = select_folder(client, control_ctx, folder)?;
+        let selected_uidvalidity = selected.untagged.iter().find_map(|u| {
+            if let Untagged::StatusLine(line) = u
+                && line.code.as_deref() == Some("UIDVALIDITY")
+            {
+                return line.code_args.as_deref()?.parse::<u32>().ok();
+            }
+            None
+        });
+        if selected_uidvalidity != Some(expected_uidvalidity) {
+            log_at(
+                logger,
+                LEVEL_DEFAULT,
+                &format!(
+                    "Gmail identity backfill: folder {:?} UIDVALIDITY mismatch archive={} server={:?}; left unchanged",
+                    folder_name, expected_uidvalidity, selected_uidvalidity
+                ),
+            );
+            continue;
+        }
+
+        let tx = conn.transaction()?;
+        for batch in chunks(&uids, fetch_batch) {
+            let set = command::format_uid_set(batch, true);
+            let resp = control_run_collect(
+                client,
+                control_ctx,
+                &command::uid_fetch(&set, &["UID", "X-GM-MSGID"]),
+            )?;
+            for item in &resp.untagged {
+                let Some(attrs) = fetch::extract(item) else {
+                    continue;
+                };
+                let (Some(uid), Some(gmail_msgid)) = (attrs.uid, attrs.gmail_msgid) else {
+                    continue;
+                };
+                updated += tx.execute(
+                    "UPDATE sync_id_imap SET gmail_msgid = ?1 \
+                     WHERE source_id = ?2 AND type_name = ?3 AND folder = ?4 \
+                       AND uidvalidity = ?5 AND uid = ?6 AND gmail_msgid IS NULL",
+                    params![
+                        gmail_msgid.to_string(),
+                        source_id,
+                        EMAIL_TYPE,
+                        folder_name,
+                        expected_uidvalidity,
+                        uid
+                    ],
+                )? as u64;
+            }
+        }
+        tx.commit()?;
+    }
+    Ok(updated)
 }
 
 #[derive(Debug, Clone)]
@@ -1187,7 +1344,7 @@ fn refresh_present_flags(
             if let Some(gmail_msgid) = attrs.gmail_msgid {
                 tx.execute(
                     "UPDATE sync_id_imap SET gmail_msgid = ?1 WHERE source_id = ?2 AND type_name = ?3 AND folder = ?4 AND uidvalidity = ?5 AND uid = ?6",
-                    params![gmail_msgid as i64, source_id, EMAIL_TYPE, folder, uidvalidity, uid],
+                    params![gmail_msgid.to_string(), source_id, EMAIL_TYPE, folder, uidvalidity, uid],
                 )?;
             }
             let translation = translate_flags(&attrs.flags, include_deleted);
