@@ -1120,7 +1120,13 @@ fn insert_single_message(
     };
 
     db::imap_ids::insert_email(
-        tx, source_id, folder, uidvalidity, uid, email_local, attrs.gmail_msgid,
+        tx,
+        source_id,
+        folder,
+        uidvalidity,
+        uid,
+        email_local,
+        attrs.gmail_msgid,
     )?;
     reconcile_canonical_memberships(tx, source_id, email_local, counts)?;
     counts.fetched += 1;
