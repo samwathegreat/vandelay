@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS sync_id_jmap (
 CREATE INDEX IF NOT EXISTS sync_id_jmap_local_idx
     ON sync_id_jmap (type_name, local_id);
 
+CREATE TABLE IF NOT EXISTS export_id_jmap (
+    account_id  TEXT    NOT NULL,
+    type_name   TEXT    NOT NULL,
+    local_id    INTEGER NOT NULL,
+    jmap_id     TEXT    NOT NULL,
+    PRIMARY KEY (account_id, type_name, local_id),
+    UNIQUE (account_id, type_name, jmap_id)
+);
+
+CREATE INDEX IF NOT EXISTS export_id_jmap_target_idx
+    ON export_id_jmap (account_id, type_name, jmap_id);
+
 CREATE TABLE IF NOT EXISTS sync_state_jmap (
     source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     type_name   TEXT    NOT NULL,
