@@ -33,14 +33,27 @@ pub fn insert_email(
     uidvalidity: u32,
     uid: u32,
     local_id: i64,
+    gmail_msgid: Option<u64>,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT OR REPLACE INTO sync_id_imap
-         (source_id, type_name, folder, uidvalidity, uid, local_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![source_id, EMAIL, folder, uidvalidity, uid, local_id],
+         (source_id, type_name, folder, uidvalidity, uid, local_id, gmail_msgid)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![source_id, EMAIL, folder, uidvalidity, uid, local_id, gmail_msgid.map(|v| v as i64)],
     )?;
     Ok(())
+}
+
+pub fn local_for_gmail_msgid(
+    conn: &Connection,
+    source_id: i64,
+    gmail_msgid: u64,
+) -> Result<Option<i64>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT local_id FROM sync_id_imap WHERE source_id = ?1 AND type_name = ?2 AND gmail_msgid = ?3 LIMIT 1",
+        params![source_id, EMAIL, gmail_msgid as i64],
+        |row| row.get(0),
+    ).optional()
 }
 
 pub fn local_for_mailbox(
@@ -270,9 +283,9 @@ mod tests {
     #[test]
     fn email_roundtrip() {
         let (c, sid) = setup();
-        insert_email(&c, sid, "INBOX", 12345, 100, 1).unwrap();
-        insert_email(&c, sid, "INBOX", 12345, 101, 2).unwrap();
-        insert_email(&c, sid, "Sent", 7777, 1, 3).unwrap();
+        insert_email(&c, sid, "INBOX", 12345, 100, 1, None).unwrap();
+        insert_email(&c, sid, "INBOX", 12345, 101, 2, None).unwrap();
+        insert_email(&c, sid, "Sent", 7777, 1, 3, None).unwrap();
         assert_eq!(
             local_for_email(&c, sid, "INBOX", 12345, 100).unwrap(),
             Some(1)
@@ -288,9 +301,9 @@ mod tests {
     #[test]
     fn one_email_can_have_many_imap_observations() {
         let (c, sid) = setup();
-        insert_email(&c, sid, "INBOX", 1, 10, 42).unwrap();
-        insert_email(&c, sid, "[Gmail]/All Mail", 2, 20, 42).unwrap();
-        insert_email(&c, sid, "Project", 3, 30, 42).unwrap();
+        insert_email(&c, sid, "INBOX", 1, 10, 42, None).unwrap();
+        insert_email(&c, sid, "[Gmail]/All Mail", 2, 20, 42, None).unwrap();
+        insert_email(&c, sid, "Project", 3, 30, 42, None).unwrap();
 
         assert_eq!(email_observation_count(&c, sid, 42).unwrap(), 3);
         let folders = email_folders_for_local(&c, sid, 42).unwrap();
@@ -306,9 +319,9 @@ mod tests {
     #[test]
     fn deleting_one_observation_preserves_the_other_observations() {
         let (c, sid) = setup();
-        insert_email(&c, sid, "INBOX", 10, 101, 42).unwrap();
-        insert_email(&c, sid, "[Gmail]/All Mail", 20, 202, 42).unwrap();
-        insert_email(&c, sid, "Project", 30, 303, 42).unwrap();
+        insert_email(&c, sid, "INBOX", 10, 101, 42, None).unwrap();
+        insert_email(&c, sid, "[Gmail]/All Mail", 20, 202, 42, None).unwrap();
+        insert_email(&c, sid, "Project", 30, 303, 42, None).unwrap();
 
         delete_email(&c, sid, "INBOX", 10, 101).unwrap();
 
@@ -326,8 +339,8 @@ mod tests {
     #[test]
     fn duplicate_uids_in_one_mailbox_can_share_a_canonical_email() {
         let (c, sid) = setup();
-        insert_email(&c, sid, "[Gmail]/Important", 55, 1001, 42).unwrap();
-        insert_email(&c, sid, "[Gmail]/Important", 55, 1002, 42).unwrap();
+        insert_email(&c, sid, "[Gmail]/Important", 55, 1001, 42, None).unwrap();
+        insert_email(&c, sid, "[Gmail]/Important", 55, 1002, 42, None).unwrap();
 
         assert_eq!(email_observation_count(&c, sid, 42).unwrap(), 2);
         let folder = email_uids_in_folder(&c, sid, "[Gmail]/Important").unwrap();
@@ -345,9 +358,9 @@ mod tests {
     #[test]
     fn delete_all_emails_in_folder_wipes_only_that_folder() {
         let (c, sid) = setup();
-        insert_email(&c, sid, "INBOX", 1, 10, 1).unwrap();
-        insert_email(&c, sid, "INBOX", 1, 11, 2).unwrap();
-        insert_email(&c, sid, "Sent", 1, 10, 3).unwrap();
+        insert_email(&c, sid, "INBOX", 1, 10, 1, None).unwrap();
+        insert_email(&c, sid, "INBOX", 1, 11, 2, None).unwrap();
+        insert_email(&c, sid, "Sent", 1, 10, 3, None).unwrap();
         let removed = delete_all_emails_in_folder(&c, sid, "INBOX").unwrap();
         assert_eq!(removed, 2);
         assert!(email_uids_in_folder(&c, sid, "INBOX").unwrap().is_empty());
@@ -368,8 +381,8 @@ mod tests {
     #[test]
     fn pk_composite_is_per_type_per_folder_per_uid() {
         let (c, sid) = setup();
-        insert_email(&c, sid, "INBOX", 1, 10, 1).unwrap();
-        insert_email(&c, sid, "INBOX", 1, 10, 1).unwrap();
+        insert_email(&c, sid, "INBOX", 1, 10, 1, None).unwrap();
+        insert_email(&c, sid, "INBOX", 1, 10, 1, None).unwrap();
         assert_eq!(email_uids_in_folder(&c, sid, "INBOX").unwrap().len(), 1);
     }
 
@@ -377,6 +390,6 @@ mod tests {
     fn mailbox_and_email_namespaces_do_not_collide_on_local_id() {
         let (c, sid) = setup();
         insert_mailbox(&c, sid, "INBOX", 42).unwrap();
-        insert_email(&c, sid, "INBOX", 1, 1, 42).unwrap();
+        insert_email(&c, sid, "INBOX", 1, 1, 42, None).unwrap();
     }
 }
