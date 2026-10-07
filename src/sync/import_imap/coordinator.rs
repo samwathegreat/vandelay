@@ -673,14 +673,7 @@ fn delete_vanished_folders(
             })?
             .collect::<Result<Vec<_>, _>>()?;
         for (uidvalidity, uid) in observations {
-            remove_email_observation(
-                &tx,
-                source_id,
-                name,
-                uidvalidity,
-                uid,
-                email_counts,
-            )?;
+            remove_email_observation(&tx, source_id, name, uidvalidity, uid, email_counts)?;
         }
         db::imap_state::delete(&tx, source_id, name)?;
         tx.execute("DELETE FROM mailboxes WHERE id = ?1", params![local_id])?;
@@ -927,8 +920,7 @@ fn remove_email_observation(
     uid: u32,
     counts: &mut TypeCounts,
 ) -> Result<(), Error> {
-    let Some(local_id) =
-        db::imap_ids::local_for_email(tx, source_id, folder, uidvalidity, uid)?
+    let Some(local_id) = db::imap_ids::local_for_email(tx, source_id, folder, uidvalidity, uid)?
     else {
         return Ok(());
     };
