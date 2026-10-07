@@ -1189,6 +1189,14 @@ pub(super) struct FetchTarget<'a> {
     pub mailbox_local: i64,
 }
 
+fn required_gmail_msgid(attrs: &fetch::FetchAttrs, folder: &str, uid: u32) -> Result<u64, Error> {
+    attrs.gmail_msgid.ok_or_else(|| {
+        Error::Partial(format!(
+            "folder {folder:?} uid {uid}: Gmail FETCH omitted required X-GM-MSGID"
+        ))
+    })
+}
+
 fn insert_single_message(
     tx: &rusqlite::Transaction<'_>,
     target: &FetchTarget<'_>,
@@ -1249,11 +1257,7 @@ fn insert_single_message(
     // X-GM-MSGID is mandatory identity on this Gmail-focused branch.
     // Never fall back to blob equality: distinct Gmail messages may have
     // identical RFC822 bytes and must remain distinct.
-    let gmail_msgid = attrs.gmail_msgid.ok_or_else(|| {
-        Error::Partial(format!(
-            "folder {folder:?} uid {uid}: Gmail FETCH omitted required X-GM-MSGID"
-        ))
-    })?;
+    let gmail_msgid = required_gmail_msgid(attrs, folder, uid)?;
     let existing: Option<i64> =
         db::imap_ids::local_for_gmail_msgid(tx, source_id, gmail_msgid)?;
 
@@ -1561,6 +1565,27 @@ fn dry_run_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gmail_fetch_without_x_gm_msgid_is_rejected() {
+        let attrs = fetch::FetchAttrs {
+            uid: Some(42),
+            body: Some(b"same bytes are not identity".to_vec()),
+            ..Default::default()
+        };
+        let err = required_gmail_msgid(&attrs, "INBOX", 42).unwrap_err();
+        assert!(err.to_string().contains("omitted required X-GM-MSGID"));
+    }
+
+    #[test]
+    fn gmail_fetch_uses_full_width_x_gm_msgid() {
+        let attrs = fetch::FetchAttrs {
+            uid: Some(42),
+            gmail_msgid: Some(u64::MAX),
+            ..Default::default()
+        };
+        assert_eq!(required_gmail_msgid(&attrs, "INBOX", 42).unwrap(), u64::MAX);
+    }
 
     fn canonical_test_db() -> (Connection, i64, i64) {
         use crate::db::init;
