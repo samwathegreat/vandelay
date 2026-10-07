@@ -266,8 +266,7 @@ fn run_into(
     // identical RFC822 bytes.
     if !client.has_capability("X-GM-EXT-1") {
         return Err(Error::Usage(
-            "this Gmail archive branch requires an IMAP server advertising X-GM-EXT-1"
-                .to_owned(),
+            "this Gmail archive branch requires an IMAP server advertising X-GM-EXT-1".to_owned(),
         ));
     }
 
@@ -1258,8 +1257,7 @@ fn insert_single_message(
     // Never fall back to blob equality: distinct Gmail messages may have
     // identical RFC822 bytes and must remain distinct.
     let gmail_msgid = required_gmail_msgid(attrs, folder, uid)?;
-    let existing: Option<i64> =
-        db::imap_ids::local_for_gmail_msgid(tx, source_id, gmail_msgid)?;
+    let existing: Option<i64> = db::imap_ids::local_for_gmail_msgid(tx, source_id, gmail_msgid)?;
 
     let email_local = match existing {
         Some(id) => {
