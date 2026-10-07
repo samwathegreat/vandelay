@@ -37,6 +37,7 @@ fn imap_config(account: &Account, imap: &Endpoint) -> ImapImportConfig {
         automap: true,
         include_deleted: false,
         fetch_batch: 64,
+        gmail_identity_backfill: false,
         imap_connections: 2,
         allow_source_change: false,
     }
