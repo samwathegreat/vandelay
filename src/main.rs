@@ -7,6 +7,7 @@
 use clap::Parser;
 
 use vandelay::cli::{Action, Cli};
+use vandelay::db::canonical_email;
 use vandelay::error::Error;
 use vandelay::inspect;
 use vandelay::sync::{self, RunOutcome, Summary};
@@ -31,6 +32,9 @@ fn run() -> i32 {
     };
 
     let (outcome, logger) = match action {
+        Action::ConsolidateGmail { archive, apply } => {
+            return run_gmail_consolidation(&archive, apply);
+        }
         Action::Import(common, config) => {
             let logger = common.logger;
             (sync::import_jmap::run_reporting(common, config), logger)
@@ -99,6 +103,55 @@ fn run() -> i32 {
             }
         }
     }
+}
+
+fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
+    let mut conn = match rusqlite::Connection::open(archive) {
+        Ok(conn) => conn,
+        Err(err) => return fail(&Error::from(err)),
+    };
+    let analysis = match canonical_email::analyze_gmail_identities(&conn) {
+        Ok(analysis) => analysis,
+        Err(err) => return fail(&Error::from(err)),
+    };
+
+    println!("Gmail identity consolidation analysis:");
+    println!("  observations={}", analysis.observations);
+    println!("  populated={}", analysis.populated);
+    println!("  missing={}", analysis.missing);
+    println!("  unique_x_gm_msgid={}", analysis.gmail_identities);
+    println!("  duplicate_identity_groups={}", analysis.duplicate_identity_groups);
+    println!("  rows_removed={}", analysis.rows_removed);
+    println!("  blob_conflict_groups={}", analysis.blob_conflict_groups);
+    println!("  keyword_conflict_groups={}", analysis.keyword_conflict_groups);
+    println!("  max_rows_per_identity={}", analysis.max_rows_per_identity);
+    println!("  email_rows_before={}", analysis.email_rows_before);
+    println!("  email_rows_after={}", analysis.email_rows_after);
+    println!("  safe_to_apply={}", analysis.safe_to_apply());
+
+    if !apply {
+        println!("read-only analysis; rerun with --apply only after reviewing this report and taking a checkpoint");
+        return 0;
+    }
+    if !analysis.safe_to_apply() {
+        return fail(&Error::Usage(
+            "Gmail consolidation is blocked: missing identities or identity groups contain conflicting blobs/keywords"
+                .to_owned(),
+        ));
+    }
+
+    let result = match canonical_email::consolidate_by_gmail_identity(&mut conn) {
+        Ok(result) => result,
+        Err(err) => return fail(&Error::from(err)),
+    };
+    println!("Gmail identity consolidation applied:");
+    println!("  groups={}", result.groups);
+    println!("  removed_rows={}", result.removed_rows);
+    println!("  remapped_imap_observations={}", result.remapped_imap_observations);
+    println!("  removed_export_mappings={}", result.removed_export_mappings);
+    println!("  removed_takeout_mappings={}", result.removed_takeout_mappings);
+    println!("  remapped_takeout_mappings={}", result.remapped_takeout_mappings);
+    0
 }
 
 fn fail(err: &Error) -> i32 {
