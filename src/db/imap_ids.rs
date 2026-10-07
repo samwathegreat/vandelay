@@ -46,7 +46,7 @@ pub fn insert_email(
             uidvalidity,
             uid,
             local_id,
-            gmail_msgid.map(|v| v as i64)
+            gmail_msgid.map(|v| v.to_string())
         ],
     )?;
     Ok(())
@@ -59,7 +59,7 @@ pub fn local_for_gmail_msgid(
 ) -> Result<Option<i64>, rusqlite::Error> {
     conn.query_row(
         "SELECT local_id FROM sync_id_imap WHERE source_id = ?1 AND type_name = ?2 AND gmail_msgid = ?3 LIMIT 1",
-        params![source_id, EMAIL, gmail_msgid as i64],
+        params![source_id, EMAIL, gmail_msgid.to_string()],
         |row| row.get(0),
     ).optional()
 }
@@ -335,6 +335,24 @@ mod tests {
         let folders = folders_with_emails(&c, sid).unwrap();
         assert!(folders.contains("INBOX"));
         assert!(folders.contains("Sent"));
+    }
+
+    #[test]
+    fn gmail_identity_roundtrips_full_u64_range_as_text() {
+        let (c, sid) = setup();
+        insert_email(&c, sid, "INBOX", 1, 10, 1, Some(u64::MAX)).unwrap();
+        assert_eq!(
+            local_for_gmail_msgid(&c, sid, u64::MAX).unwrap(),
+            Some(1)
+        );
+        let stored: String = c
+            .query_row(
+                "SELECT gmail_msgid FROM sync_id_imap WHERE source_id = ?1 AND type_name = 'email' AND uid = 10",
+                params![sid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, u64::MAX.to_string());
     }
 
     #[test]
