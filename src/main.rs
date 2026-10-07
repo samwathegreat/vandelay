@@ -112,10 +112,7 @@ fn open_gmail_consolidation_archive(
     if apply {
         rusqlite::Connection::open(archive)
     } else {
-        rusqlite::Connection::open_with_flags(
-            archive,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
+        rusqlite::Connection::open_with_flags(archive, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
     }
 }
 
