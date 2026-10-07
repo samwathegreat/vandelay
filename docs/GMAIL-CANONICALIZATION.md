@@ -12,7 +12,7 @@ This branch makes that identifier the authority for Gmail message identity.
 
 `sync_id_imap.gmail_msgid` stores `X-GM-MSGID` as text so the complete unsigned 64-bit range is preserved.
 
-When Gmail advertises `X-GM-EXT-1`, normal IMAP metadata fetches request `X-GM-MSGID`. Existing tracked observations can be populated without downloading message bodies using:
+IMAP ingestion on this branch requires `X-GM-EXT-1`. Normal IMAP metadata/body fetches request `X-GM-MSGID`, and a fetched message that omits the required Gmail identity is rejected rather than matched by blob equality. Existing tracked observations can be populated without downloading message bodies using:
 
 ```
 vandelay import imap ... --gmail-identity-backfill ARCHIVE
@@ -72,7 +72,7 @@ Do not merge messages solely by:
 - subject, sender, date, or other headers;
 - apparent visual/content equality.
 
-Historical investigation found real cases in which identical blobs belonged to different Gmail identities. That is why `X-GM-MSGID` is authoritative.
+Historical investigation found real cases in which identical blobs belonged to different Gmail identities. That is why `X-GM-MSGID` is authoritative. The content-addressed blob ID remains part of storage/deduplication, but it is not permitted as an IMAP message-identity key.
 
 ## Historical archive repair sequence
 
