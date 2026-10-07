@@ -1023,7 +1023,6 @@ fn insert_single_message(
     };
     let blob_id = db::blobs::intern_blob(tx, body)?;
     let message_match = index_to_json(&email_index_from_blob(body));
-    let mailbox_ids = Value::Array(vec![Value::from(mailbox_local)]);
     let keywords = Value::Array(
         translation
             .keywords
@@ -1031,20 +1030,62 @@ fn insert_single_message(
             .map(|k| Value::String(k.clone()))
             .collect(),
     );
-    tx.execute(
-        "INSERT INTO emails (blob_id, received_at, mailbox_ids, keywords, message_match)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            blob_id,
-            received_at,
-            mailbox_ids.to_string(),
-            keywords.to_string(),
-            message_match,
-        ],
-    )?;
-    let email_local = tx.last_insert_rowid();
+
+    // Exact RFC822 content is the canonical physical-message identity. Reuse
+    // an existing Email row when this message is observed through another
+    // Gmail/IMAP mailbox instead of creating one Email per folder.
+    let existing: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM emails WHERE blob_id = ?1 ORDER BY id LIMIT 1",
+            params![blob_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let email_local = match existing {
+        Some(id) => {
+            let existing_keywords: String = tx.query_row(
+                "SELECT keywords FROM emails WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )?;
+            let existing_vec: Vec<String> =
+                serde_json::from_str(&existing_keywords).unwrap_or_default();
+            if keyword_set_differs(&existing_vec, &translation.keywords) {
+                log_at(
+                    logger,
+                    LEVEL_DEFAULT,
+                    &format!(
+                        "folder {folder:?} uid {uid}: canonical email {id} has differing flags across IMAP observations; using latest Gmail state"
+                    ),
+                );
+                tx.execute(
+                    "UPDATE emails SET keywords = ?1 WHERE id = ?2",
+                    params![keywords.to_string(), id],
+                )?;
+            }
+            id
+        }
+        None => {
+            let mailbox_ids = Value::Array(vec![Value::from(mailbox_local)]);
+            tx.execute(
+                "INSERT INTO emails (blob_id, received_at, mailbox_ids, keywords, message_match)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    blob_id,
+                    received_at,
+                    mailbox_ids.to_string(),
+                    keywords.to_string(),
+                    message_match,
+                ],
+            )?;
+            counts.created += 1;
+            tx.last_insert_rowid()
+        }
+    };
+
     db::imap_ids::insert_email(tx, source_id, folder, uidvalidity, uid, email_local)?;
-    counts.created += 1;
+    reconcile_canonical_memberships(tx, source_id, email_local, counts)?;
     counts.fetched += 1;
     Ok(())
 }
