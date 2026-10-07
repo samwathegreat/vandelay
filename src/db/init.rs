@@ -128,7 +128,7 @@ fn ensure_imap_gmail_msgid(conn: &Connection) -> Result<(), OpenError> {
         .any(|name| name == "gmail_msgid");
     if !has_column {
         conn.execute(
-            "ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid INTEGER",
+            "ALTER TABLE sync_id_imap ADD COLUMN gmail_msgid TEXT",
             [],
         )?;
     }
