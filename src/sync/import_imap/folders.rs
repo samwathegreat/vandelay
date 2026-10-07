@@ -131,6 +131,11 @@ pub fn apply_filters(
     folders: Vec<DiscoveredFolder>,
     filters: &FolderFilters,
 ) -> Vec<ResolvedFolder> {
+    // Keep the complete LIST namespace while resolving hierarchy. Gmail can
+    // expose a label whose literal name contains the hierarchy delimiter
+    // (for example "Gift Cards/Used / empty"). A delimiter is a hierarchy
+    // boundary only when the prefix is itself a mailbox returned by LIST.
+    let known_names: HashSet<String> = folders.iter().map(|f| f.name.clone()).collect();
     let mut keep: Vec<DiscoveredFolder> = folders
         .into_iter()
         .filter(|f| f.selectable)
@@ -156,7 +161,7 @@ pub fn apply_filters(
             continue;
         }
         let delim = f.delimiter;
-        let (leaf, parent_path) = split_parent(&f.name, delim);
+        let (leaf, parent_path) = split_parent_known(&f.name, delim, &known_names);
         resolved.push(ResolvedFolder {
             name: f.name,
             wire_name: f.wire_name,
@@ -182,6 +187,24 @@ fn match_filters(name: &str, filters: &FolderFilters) -> bool {
         return false;
     }
     true
+}
+
+fn split_parent_known(
+    name: &str,
+    delim: Option<char>,
+    known_names: &HashSet<String>,
+) -> (String, Option<String>) {
+    let Some(d) = delim else {
+        return (name.to_owned(), None);
+    };
+    for (idx, _) in name.match_indices(d).rev() {
+        let parent = &name[..idx];
+        if known_names.contains(parent) {
+            let leaf = &name[idx + d.len_utf8()..];
+            return (leaf.to_owned(), Some(parent.to_owned()));
+        }
+    }
+    split_parent(name, delim)
 }
 
 fn split_parent(name: &str, delim: Option<char>) -> (String, Option<String>) {
@@ -426,6 +449,45 @@ mod tests {
             split_parent("Projects/Alpha/Beta", Some('/')),
             ("Beta".to_owned(), Some("Projects/Alpha".to_owned()))
         );
+    }
+
+    #[test]
+    fn hierarchy_uses_existing_parent_not_literal_slash_in_gmail_label() {
+        let folders = collect_from_list(
+            &[
+                lst("Gift Cards", "/", &[]),
+                lst("Gift Cards/Used / empty", "/", &[]),
+            ],
+            false,
+        )
+        .unwrap();
+        let res = apply_filters(folders, &filters_default());
+        let child = res
+            .iter()
+            .find(|f| f.name == "Gift Cards/Used / empty")
+            .unwrap();
+        assert_eq!(child.parent_path.as_deref(), Some("Gift Cards"));
+        assert_eq!(child.leaf, "Used / empty");
+    }
+
+    #[test]
+    fn hierarchy_can_use_noselect_parent_returned_by_list() {
+        let folders = collect_from_list(
+            &[
+                lst("Projects", "/", &[]),
+                lst("Projects/Alpha", "/", &["\\Noselect"]),
+                lst("Projects/Alpha/Beta", "/", &[]),
+            ],
+            false,
+        )
+        .unwrap();
+        let res = apply_filters(folders, &filters_default());
+        let child = res
+            .iter()
+            .find(|f| f.name == "Projects/Alpha/Beta")
+            .unwrap();
+        assert_eq!(child.parent_path.as_deref(), Some("Projects/Alpha"));
+        assert_eq!(child.leaf, "Beta");
     }
 
     #[test]
