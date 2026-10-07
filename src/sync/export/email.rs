@@ -98,12 +98,8 @@ pub fn reconcile(
         .iter()
         .filter_map(|v| jid(v).map(|id| (id, v)))
         .collect();
-    let export_ids = db::export_ids::local_to_target(
-        &ctx.conn,
-        &net.account,
-        ObjectType::Email,
-    )
-    .map_err(|e| Error::Partial(e.to_string()))?;
+    let export_ids = db::export_ids::local_to_target(&ctx.conn, &net.account, ObjectType::Email)
+        .map_err(|e| Error::Partial(e.to_string()))?;
 
     let local: Vec<(i64, EmailRow)> = {
         let mut stmt = ctx
@@ -349,7 +345,7 @@ fn export_one(
                     counts.failed += 1;
                 }
             }
-        },
+        }
         Ok(SingleImport::Skipped) => counts.skipped += 1,
         Ok(SingleImport::NotCreated { error_type, .. }) if error_type == "blobNotFound" => {
             retry_after_reupload(net, uploader, maps, local_id, &cid, row, counts, logger);
