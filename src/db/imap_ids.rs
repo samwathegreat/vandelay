@@ -304,6 +304,45 @@ mod tests {
     }
 
     #[test]
+    fn deleting_one_observation_preserves_the_other_observations() {
+        let (c, sid) = setup();
+        insert_email(&c, sid, "INBOX", 10, 101, 42).unwrap();
+        insert_email(&c, sid, "[Gmail]/All Mail", 20, 202, 42).unwrap();
+        insert_email(&c, sid, "Project", 30, 303, 42).unwrap();
+
+        delete_email(&c, sid, "INBOX", 10, 101).unwrap();
+
+        assert_eq!(email_observation_count(&c, sid, 42).unwrap(), 2);
+        assert_eq!(
+            local_for_email(&c, sid, "[Gmail]/All Mail", 20, 202).unwrap(),
+            Some(42)
+        );
+        assert_eq!(
+            local_for_email(&c, sid, "Project", 30, 303).unwrap(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn duplicate_uids_in_one_mailbox_can_share_a_canonical_email() {
+        let (c, sid) = setup();
+        insert_email(&c, sid, "[Gmail]/Important", 55, 1001, 42).unwrap();
+        insert_email(&c, sid, "[Gmail]/Important", 55, 1002, 42).unwrap();
+
+        assert_eq!(email_observation_count(&c, sid, 42).unwrap(), 2);
+        let folder = email_uids_in_folder(&c, sid, "[Gmail]/Important").unwrap();
+        assert_eq!(folder.get(&(55, 1001)), Some(&42));
+        assert_eq!(folder.get(&(55, 1002)), Some(&42));
+
+        delete_email(&c, sid, "[Gmail]/Important", 55, 1001).unwrap();
+        assert_eq!(email_observation_count(&c, sid, 42).unwrap(), 1);
+        assert_eq!(
+            local_for_email(&c, sid, "[Gmail]/Important", 55, 1002).unwrap(),
+            Some(42)
+        );
+    }
+
+    #[test]
     fn delete_all_emails_in_folder_wipes_only_that_folder() {
         let (c, sid) = setup();
         insert_email(&c, sid, "INBOX", 1, 10, 1).unwrap();
