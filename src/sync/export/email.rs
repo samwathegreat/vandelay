@@ -14,7 +14,7 @@ use crate::db;
 use crate::error::Error;
 use crate::jmap::error::JmapError;
 use crate::jmap::request::{
-    MethodCall, Request, check_method_error, get_objects, retry_method_call,
+    MethodCall, Request, SetRequest, check_method_error, get_objects, retry_method_call, set_call,
 };
 use crate::jmap::retry::MethodCallKind;
 use crate::jmap::wire::JmapId;
@@ -94,6 +94,16 @@ pub fn reconcile(
         }
     }
     let target_keys: HashSet<EmailKey> = email_keys(&indices).into_iter().collect();
+    let target_by_id: HashMap<String, &Value> = target_min
+        .iter()
+        .filter_map(|v| jid(v).map(|id| (id, v)))
+        .collect();
+    let export_ids = db::export_ids::local_to_target(
+        &ctx.conn,
+        &net.account,
+        ObjectType::Email,
+    )
+    .map_err(|e| Error::Partial(e.to_string()))?;
 
     let local: Vec<(i64, EmailRow)> = {
         let mut stmt = ctx
@@ -119,15 +129,114 @@ pub fn reconcile(
 
     let mut uploader = Uploader::new(net, &ctx.conn);
     for (i, key) in local_keys.iter().enumerate() {
+        let (local_id, row) = &local[i];
+
+        if let Some(target_id) = export_ids.get(local_id) {
+            if let Some(target) = target_by_id.get(target_id) {
+                reconcile_mapped_email(net, maps, target, target_id, row, counts, logger);
+                continue;
+            }
+            if !net.dry_run {
+                let _ = db::export_ids::delete_local(
+                    &ctx.conn,
+                    &net.account,
+                    ObjectType::Email,
+                    *local_id,
+                );
+            }
+        }
+
         if target_keys.contains(key) {
             counts.skipped += 1;
             continue;
         }
-        let (local_id, row) = &local[i];
         export_one(net, &mut uploader, maps, *local_id, row, counts, logger);
     }
 
     Ok(Plan::default())
+}
+
+fn target_state(v: &Value) -> (Map<String, Value>, Map<String, Value>) {
+    let mailbox_ids = v
+        .get("mailboxIds")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let keywords = v
+        .get("keywords")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    (mailbox_ids, keywords)
+}
+
+fn reconcile_mapped_email(
+    net: &Net,
+    maps: &Maps,
+    target: &Value,
+    target_id: &str,
+    row: &EmailRow,
+    counts: &mut TypeCounts,
+    logger: &Logger,
+) -> bool {
+    let Some(desired_mailboxes) = build_mailbox_ids(row, maps) else {
+        logger.warn(&format!(
+            "Email/set {target_id} skipped: mailbox not on target"
+        ));
+        counts.failed += 1;
+        return true;
+    };
+    let desired_keywords = build_keywords(row);
+    let (actual_mailboxes, actual_keywords) = target_state(target);
+
+    if desired_mailboxes == actual_mailboxes && desired_keywords == actual_keywords {
+        counts.skipped += 1;
+        return true;
+    }
+    if net.dry_run {
+        counts.updated += 1;
+        return true;
+    }
+
+    let mut patch = Map::new();
+    if desired_mailboxes != actual_mailboxes {
+        patch.insert("mailboxIds".to_owned(), Value::Object(desired_mailboxes));
+    }
+    if desired_keywords != actual_keywords {
+        patch.insert("keywords".to_owned(), Value::Object(desired_keywords));
+    }
+    let mut updates = Map::new();
+    updates.insert(target_id.to_owned(), Value::Object(patch));
+    match set_call(
+        &net.client,
+        &net.api,
+        &net.account,
+        ObjectType::Email.jmap_name(),
+        SetRequest {
+            update: Some(Value::Object(updates)),
+            ..Default::default()
+        },
+        &net.limits,
+    ) {
+        Ok(outcome) if outcome.updated.iter().any(|id| id == target_id) => {
+            counts.updated += 1;
+        }
+        Ok(outcome) => {
+            let detail = outcome
+                .not_updated
+                .iter()
+                .find(|(id, _)| id == target_id)
+                .map(|(_, e)| e.to_string())
+                .unwrap_or_else(|| "Email/set returned neither updated nor notUpdated".to_owned());
+            logger.warn(&format!("Email/set {target_id} failed: {detail}"));
+            counts.failed += 1;
+        }
+        Err(e) => {
+            logger.warn(&format!("Email/set {target_id} failed: {e}"));
+            counts.failed += 1;
+        }
+    }
+    true
 }
 
 fn build_mailbox_ids(row: &EmailRow, maps: &Maps) -> Option<Map<String, Value>> {
