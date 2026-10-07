@@ -147,7 +147,7 @@ fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
     }
     if !analysis.safe_to_apply() {
         return fail(&Error::Usage(
-            "Gmail consolidation is blocked: missing identities or identity groups contain conflicting blobs/keywords"
+            "Gmail consolidation is blocked: missing identities, conflicting blobs/keywords, or a local Email spans multiple Gmail identities"
                 .to_owned(),
         ));
     }
