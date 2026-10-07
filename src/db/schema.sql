@@ -42,12 +42,19 @@ CREATE TABLE IF NOT EXISTS sync_id_imap (
     uidvalidity  INTEGER NOT NULL,
     uid          INTEGER NOT NULL,
     local_id     INTEGER NOT NULL,
-    PRIMARY KEY (source_id, type_name, folder, uidvalidity, uid),
-    UNIQUE (source_id, type_name, local_id)
+    PRIMARY KEY (source_id, type_name, folder, uidvalidity, uid)
 );
 
 CREATE INDEX IF NOT EXISTS sync_id_imap_folder_idx
     ON sync_id_imap (source_id, type_name, folder);
+
+-- Mailboxes remain one-to-one with an IMAP source, but one canonical Email may
+-- be observed through many IMAP folders/Uids.
+CREATE UNIQUE INDEX IF NOT EXISTS sync_id_imap_mailbox_local_idx
+    ON sync_id_imap (source_id, local_id) WHERE type_name = 'mailbox';
+
+CREATE INDEX IF NOT EXISTS sync_id_imap_email_local_idx
+    ON sync_id_imap (source_id, local_id) WHERE type_name = 'email';
 
 CREATE TABLE IF NOT EXISTS imap_folder_state (
     source_id    INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
