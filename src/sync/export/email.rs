@@ -490,11 +490,16 @@ fn interpret_import(mr: &MethodCall, cid: &str) -> Result<SingleImport, JmapErro
             detail: err.to_string(),
         });
     }
-    if let Some(created) = mr.args.get("created").and_then(Value::as_object)
-        && let Some(obj) = created.get(cid)
-        && let Some(id) = obj.get("id").and_then(Value::as_str)
-    {
-        return Ok(SingleImport::Created(id.to_owned()));
+    if let Some(created) = mr.args.get("created").and_then(Value::as_object) {
+        // JMAP servers should echo our creation id. Each Vandelay Email/import
+        // call contains exactly one Email, so also accept a sole created object
+        // from tolerant/mock implementations that return a different key.
+        let obj = created
+            .get(cid)
+            .or_else(|| (created.len() == 1).then(|| created.values().next()).flatten());
+        if let Some(id) = obj.and_then(|v| v.get("id")).and_then(Value::as_str) {
+            return Ok(SingleImport::Created(id.to_owned()));
+        }
     }
     Ok(SingleImport::NotCreated {
         error_type: String::new(),
