@@ -40,7 +40,7 @@ A future manager/orchestration layer is planned. That manager is not yet the aut
 
 ## Gmail-first scope
 
-The upstream Vandelay codebase supports many protocols. This project currently prioritizes the Gmail archive use case. Generic IMAP/non-Gmail compatibility may be restored or generalized later, but it must not weaken Gmail identity correctness.
+The upstream Vandelay codebase supports many protocols. This project currently prioritizes the Gmail archive use case. IMAP ingestion on this branch intentionally requires a server advertising `X-GM-EXT-1`. Non-Gmail IMAP servers are rejected rather than falling back to weaker message identity. Generic IMAP compatibility may be restored or generalized later, but it must not weaken Gmail identity correctness.
 
 ## Public-documentation privacy
 
