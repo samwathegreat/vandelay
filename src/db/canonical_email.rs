@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -12,6 +12,8 @@ pub struct Consolidation {
     pub groups: u64,
     pub removed_rows: u64,
     pub remapped_imap_observations: u64,
+    pub canonical_mailboxes: u64,
+    pub removed_mailboxes: u64,
 }
 
 /// Collapse duplicate Email rows that reference the same exact RFC822 blob.
@@ -34,9 +36,9 @@ pub fn consolidate_by_blob(conn: &mut Connection) -> rusqlite::Result<Consolidat
     };
 
     let mut out = Consolidation::default();
+    canonicalize_gmail_special_mailboxes(&tx, &mut out)?;
     for blob_id in groups {
         let mut ids = Vec::new();
-        let mut mailboxes = BTreeSet::new();
         let mut keywords = BTreeSet::new();
         {
             let mut stmt = tx.prepare(
@@ -50,13 +52,8 @@ pub fn consolidate_by_blob(conn: &mut Connection) -> rusqlite::Result<Consolidat
                 ))
             })?;
             for row in rows {
-                let (id, mailbox_json, keyword_json) = row?;
+                let (id, _mailbox_json, keyword_json) = row?;
                 ids.push(id);
-                for value in json_array(&mailbox_json)? {
-                    if let Some(id) = value.as_i64() {
-                        mailboxes.insert(id);
-                    }
-                }
                 for value in json_array(&keyword_json)? {
                     if let Some(keyword) = value.as_str() {
                         keywords.insert(keyword.to_owned());
@@ -119,7 +116,8 @@ pub fn consolidate_by_blob(conn: &mut Connection) -> rusqlite::Result<Consolidat
             out.removed_rows += 1;
         }
 
-        let mailbox_json = serde_json::to_string(&mailboxes.into_iter().collect::<Vec<_>>())
+        let mailboxes = observed_mailboxes(&tx, canonical)?;
+        let mailbox_json = serde_json::to_string(&mailboxes)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let keyword_json = serde_json::to_string(&keywords.into_iter().collect::<Vec<_>>())
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -132,6 +130,132 @@ pub fn consolidate_by_blob(conn: &mut Connection) -> rusqlite::Result<Consolidat
 
     tx.commit()?;
     Ok(out)
+}
+
+
+fn canonicalize_gmail_special_mailboxes(
+    conn: &Connection,
+    out: &mut Consolidation,
+) -> rusqlite::Result<()> {
+    // Existing archives may contain an older canonical special mailbox plus a
+    // second ordinary mailbox created by a later Gmail IMAP bridge. Prefer the
+    // valid JMAP-role mailbox and repoint Gmail's wire-folder mapping to it.
+    // All Mail and Starred are different: their Gmail roles are not JMAP
+    // Mailbox roles, so retain their existing mailbox but strip the role.
+    const ROLE_FOLDERS: &[(&str, &str)] = &[
+        ("[Gmail]/Drafts", "drafts"),
+        ("[Gmail]/Sent Mail", "sent"),
+        ("[Gmail]/Spam", "junk"),
+        ("[Gmail]/Trash", "trash"),
+    ];
+    for (folder, role) in ROLE_FOLDERS {
+        let target: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM mailboxes WHERE role = ?1 ORDER BY id LIMIT 1",
+                params![role],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(target) = target else { continue };
+        let mappings: Vec<(i64, i64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT source_id, local_id FROM sync_id_imap
+                 WHERE type_name = 'mailbox' AND folder = ?1",
+            )?;
+            stmt.query_map(params![folder], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for (source_id, old) in mappings {
+            if old == target {
+                continue;
+            }
+            conn.execute(
+                "UPDATE sync_id_imap SET local_id = ?1
+                 WHERE source_id = ?2 AND type_name = 'mailbox' AND folder = ?3",
+                params![target, source_id, folder],
+            )?;
+            // Repoint every canonical Email membership that referenced the
+            // duplicate mailbox before deleting it.
+            replace_mailbox_membership(conn, old, target)?;
+            if mailbox_is_unreferenced(conn, old)? {
+                conn.execute("DELETE FROM mailboxes WHERE id = ?1", params![old])?;
+                out.removed_mailboxes += 1;
+            }
+            out.canonical_mailboxes += 1;
+        }
+    }
+    for folder in ["[Gmail]/All Mail", "[Gmail]/Starred"] {
+        conn.execute(
+            "UPDATE mailboxes SET role = NULL WHERE id IN (
+                 SELECT local_id FROM sync_id_imap
+                 WHERE type_name = 'mailbox' AND folder = ?1
+             )",
+            params![folder],
+        )?;
+    }
+    Ok(())
+}
+
+fn replace_mailbox_membership(conn: &Connection, old: i64, new: i64) -> rusqlite::Result<()> {
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, mailbox_ids FROM emails
+             WHERE EXISTS (SELECT 1 FROM json_each(emails.mailbox_ids) WHERE value = ?1)",
+        )?;
+        stmt.query_map(params![old], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (email_id, raw) in rows {
+        let mut ids = BTreeSet::new();
+        for value in json_array(&raw)? {
+            if let Some(id) = value.as_i64() {
+                ids.insert(if id == old { new } else { id });
+            }
+        }
+        let encoded = serde_json::to_string(&ids.into_iter().collect::<Vec<_>>())
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        conn.execute(
+            "UPDATE emails SET mailbox_ids = ?1 WHERE id = ?2",
+            params![encoded, email_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn mailbox_is_unreferenced(conn: &Connection, id: i64) -> rusqlite::Result<bool> {
+    let mapped: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sync_id_imap WHERE type_name = 'mailbox' AND local_id = ?1)",
+        params![id],
+        |r| r.get(0),
+    )?;
+    let child: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mailboxes WHERE parent_id = ?1)",
+        params![id],
+        |r| r.get(0),
+    )?;
+    let email: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM emails, json_each(emails.mailbox_ids) WHERE json_each.value = ?1
+         )",
+        params![id],
+        |r| r.get(0),
+    )?;
+    Ok(!mapped && !child && !email)
+}
+
+fn observed_mailboxes(conn: &Connection, email_id: i64) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT mb.local_id
+         FROM sync_id_imap obs
+         JOIN sync_id_imap mb
+           ON mb.source_id = obs.source_id
+          AND mb.type_name = 'mailbox'
+          AND mb.folder = obs.folder
+         WHERE obs.type_name = 'email' AND obs.local_id = ?1
+         ORDER BY mb.local_id",
+    )?;
+    stmt.query_map(params![email_id], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn json_array(raw: &str) -> rusqlite::Result<Vec<Value>> {
