@@ -579,7 +579,7 @@ fn email_export_sends_one_email_per_import_call() {
         .expect(0)
         .create();
 
-let import_1 = server
+    let import_1 = server
     .mock("POST", api)
     .match_body(Matcher::AllOf(vec![
         Matcher::Regex("Email/import".into()),
@@ -593,7 +593,7 @@ let import_1 = server
     .expect(1)
     .create();
 
-let import_2 = server
+    let import_2 = server
     .mock("POST", api)
     .match_body(Matcher::AllOf(vec![
         Matcher::Regex("Email/import".into()),
