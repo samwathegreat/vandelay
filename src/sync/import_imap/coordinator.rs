@@ -598,7 +598,37 @@ fn upsert_mailboxes(
             None => None,
         };
         let existing = db::imap_ids::local_for_mailbox(&tx, source_id, &folder.name)?;
-        let id = if let Some(id) = existing {
+        // A bootstrap import (for example Takeout) may already have created the
+        // canonical special mailbox before IMAP sees Gmail's wire folder name.
+        // Adopt that untracked role mailbox instead of creating a second Trash,
+        // Sent, Drafts, etc. mailbox. Never steal a mailbox already tracked by
+        // this IMAP source.
+        let role_existing = if existing.is_none() {
+            if let Some(role) = folder.role {
+                tx.query_row(
+                    "SELECT m.id FROM mailboxes m
+                     WHERE m.role = ?1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM sync_id_imap s
+                           WHERE s.source_id = ?2 AND s.type_name = 'mailbox'
+                             AND s.local_id = m.id
+                       )
+                     LIMIT 1",
+                    params![role, source_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let id = if let Some(id) = existing.or(role_existing) {
+            if existing.is_none() {
+                db::imap_ids::insert_mailbox(&tx, source_id, &folder.name, id)?;
+                counts.updated += 1;
+            }
             let role = db::roles::unique_role(&tx, folder.role, Some(id))?;
             tx.execute(
                 "UPDATE mailboxes SET name = ?1, parent_id = ?2, role = ?3,
@@ -1361,6 +1391,55 @@ mod tests {
         db::imap_ids::insert_email(&c, sid, "INBOX", 1, 101, email_id).unwrap();
         db::imap_ids::insert_email(&c, sid, "[Gmail]/All Mail", 2, 202, email_id).unwrap();
         (c, sid, email_id)
+    }
+
+    #[test]
+    fn gmail_special_folder_adopts_untracked_role_mailbox() {
+        use crate::db::init;
+        use crate::db::sources::{SourceKey, upsert_source};
+
+        let mut c = Connection::open_in_memory().unwrap();
+        init::apply_schema(&c).unwrap();
+        let sid = upsert_source(
+            &c,
+            &SourceKey {
+                kind: "imap".to_owned(),
+                session_url: "imaps://host:993".to_owned(),
+                account_id: "alice".to_owned(),
+            },
+            None,
+            "alice",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO mailboxes (id, name, role) VALUES (51, 'Trash', 'trash')",
+            [],
+        )
+        .unwrap();
+
+        let folders = vec![ResolvedFolder {
+            name: "[Gmail]/Trash".to_owned(),
+            wire_name: "[Gmail]/Trash".to_owned(),
+            leaf: "Trash".to_owned(),
+            parent_path: Some("[Gmail]".to_owned()),
+            delimiter: Some('/'),
+            role: Some("trash"),
+            subscribed: true,
+            status: None,
+        }];
+        let mut counts = TypeCounts::default();
+        upsert_mailboxes(&mut c, sid, &folders, &mut counts).unwrap();
+
+        assert_eq!(
+            db::imap_ids::local_for_mailbox(&c, sid, "[Gmail]/Trash").unwrap(),
+            Some(51)
+        );
+        let mailbox_count: i64 = c
+            .query_row("SELECT COUNT(*) FROM mailboxes", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mailbox_count, 1, "must not create a duplicate Trash");
+        assert_eq!(counts.created, 0);
+        assert_eq!(counts.updated, 1);
     }
 
     #[test]
