@@ -70,6 +70,7 @@ fn imap_basic_config(localpart: &str) -> ImapImportConfig {
         automap: true,
         include_deleted: false,
         fetch_batch: 256,
+        gmail_identity_backfill: false,
         imap_connections: 4,
         allow_source_change: false,
     }
