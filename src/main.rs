@@ -105,15 +105,22 @@ fn run() -> i32 {
     }
 }
 
-fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
-    let mut conn = match if apply {
+fn open_gmail_consolidation_archive(
+    archive: &std::path::Path,
+    apply: bool,
+) -> rusqlite::Result<rusqlite::Connection> {
+    if apply {
         rusqlite::Connection::open(archive)
     } else {
         rusqlite::Connection::open_with_flags(
             archive,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )
-    } {
+    }
+}
+
+fn run_gmail_consolidation(archive: &std::path::Path, apply: bool) -> i32 {
+    let mut conn = match open_gmail_consolidation_archive(archive, apply) {
         Ok(conn) => conn,
         Err(err) => return fail(&Error::from(err)),
     };
@@ -201,5 +208,40 @@ fn report(summary: &Summary) {
             counts.skipped,
             counts.failed
         );
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::open_gmail_consolidation_archive;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    #[cfg(unix)]
+    fn gmail_analysis_opens_filesystem_read_only_archive() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("archive.sqlite");
+
+        {
+            let conn = rusqlite::Connection::open(&archive).unwrap();
+            conn.execute_batch("CREATE TABLE probe (id INTEGER PRIMARY KEY);")
+                .unwrap();
+        }
+
+        fs::set_permissions(&archive, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let conn = open_gmail_consolidation_archive(&archive, false).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM probe", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(conn
+            .execute("INSERT INTO probe DEFAULT VALUES", [])
+            .is_err());
     }
 }
