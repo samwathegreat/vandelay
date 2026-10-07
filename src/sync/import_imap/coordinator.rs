@@ -563,8 +563,10 @@ fn backfill_gmail_identity(
         }
     }
 
-    let by_name: HashMap<&str, &ResolvedFolder> =
-        folders.iter().map(|folder| (folder.name.as_str(), folder)).collect();
+    let by_name: HashMap<&str, &ResolvedFolder> = folders
+        .iter()
+        .map(|folder| (folder.name.as_str(), folder))
+        .collect();
     let mut updated = 0u64;
     for ((folder_name, expected_uidvalidity), uids) in tracked {
         let Some(folder) = by_name.get(folder_name.as_str()).copied() else {
