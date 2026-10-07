@@ -1839,7 +1839,10 @@ const FRENCH_SENT_MUTF7: &str = "Envoy&AOk-s";
 #[test]
 fn utf8_accept_server_gets_the_folder_name_back_as_utf8() {
     let control: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
+        auth_preamble(
+            conn,
+            "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN X-GM-EXT-1",
+        )?;
         let (tag, cmd) = conn.read_command()?;
         assert_eq!(cmd, "LIST \"\" \"*\"");
         conn.write_line(&format!("* LIST () \"/\" \"{TURKISH_SENT}\""))?;
@@ -1860,7 +1863,10 @@ fn utf8_accept_server_gets_the_folder_name_back_as_utf8() {
         Ok(())
     });
     let worker: Script = Box::new(|conn: &mut MockConn| -> std::io::Result<()> {
-        auth_preamble(conn, "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN X-GM-EXT-1")?;
+        auth_preamble(
+            conn,
+            "IMAP4rev2 ENABLE UTF8=ACCEPT LITERAL+ AUTH=PLAIN X-GM-EXT-1",
+        )?;
         let (tag, name) = read_select_mailbox(conn)?;
         assert_eq!(
             name, TURKISH_SENT,
