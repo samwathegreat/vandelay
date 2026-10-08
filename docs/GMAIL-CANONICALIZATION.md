@@ -125,3 +125,11 @@ A disposable two-message test created two canonical Email rows, each observed in
 A concurrent-arrival hypothesis explains cases where Inbox reports zero new observations but All Mail reports new observations: mailbox enumeration is sequential, not an atomic snapshot. A Stage 2 run also reported a new Spam observation. Per-record logging is needed before attributing any individual observation to a specific arrival.
 
 **Still unverified at this checkpoint:** moving a test message to Trash, subsequent permanent deletion, classification of Spam-origin messages, and behavior after removing the test label entirely. The proposed archive-owned preservation mailboxes and `--no-archive` behavior are future design, not implemented.
+
+## Stage 3 verified: Gmail Trash move changes canonical local ID (2026-10-08)
+
+A controlled test moved the second disposable Gmail message into Trash without permanently deleting it. The completed sync reported one vanished observation each in Inbox, the custom test label, All Mail, Important and Sent Mail, and one new observation in `[Gmail]/Trash`. The run summary reported `email: created=2 deleted=1` (the other new message was unrelated).
+
+Read-only post-run inspection using **both original local Email IDs and both authoritative Gmail message IDs** established that the second test message retained its `X-GM-MSGID` but its local canonical Email ID changed from the original test row to a new row, with only the Trash mailbox membership. The first test message retained its original canonical ID and four observations. This establishes deletion/re-creation across a Trash transition; it does **not** establish byte-level payload equivalence or the exact internal processing sequence.
+
+**Required future fix:** preserve canonical Gmail identity across moves between source mailboxes, including Trash, rather than deleting and recreating the Email when its old observations vanish before the new folder is processed. Review source reconciliation ordering and mapping/provenance impacts. Do not attempt manual production DB repair. Permanent deletion remains untested at this checkpoint.
