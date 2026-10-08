@@ -45,3 +45,17 @@ The upstream Vandelay codebase supports many protocols. This project currently p
 ## Public-documentation privacy
 
 This repository is public. Documentation and fixtures must not contain real archive-derived email addresses, correspondent names, credentials, tokens, account identifiers, real Gmail label names, message subjects/content, or other personal mail data. Examples must use invented values. Aggregate, non-identifying operational statistics are acceptable.
+
+## October 2026 live synchronization findings (verified / pending)
+
+A controlled two-message Gmail test confirmed that removing a custom Gmail label removes only the corresponding IMAP observation and mailbox membership; the canonical Email remains associated with Inbox, All Mail, Important and Sent Mail. Another test message retained all five observations. This is **verified Stage 2 behavior**, not a claim about permanent deletion.
+
+Gmail mailboxes are scanned sequentially. During a run, a message may arrive after Inbox was scanned but before All Mail; consequently per-folder `new` counts are not a single atomic Gmail snapshot. In one observed run, All Mail and Spam each gained an observation while Inbox gained none. Arrival timing is a plausible explanation, not proven per-message causality.
+
+**Stage 3 pending:** moving the disposable second test message to Gmail Trash; verify actual IMAP observations before concluding whether Gmail retains Inbox/custom-label associations in Trash. The Gmail web UI alone does not establish IMAP folder membership.
+
+## Planned preservation architecture — not implemented
+
+The desired archive behavior is to retain a canonical message after it disappears completely from Gmail, by assigning it to an archive-owned mailbox such as `Deleted from Source`. The default should preserve; a future `--no-archive` option would opt into source-mirroring deletion. A separate `Deleted from Spam` mailbox should classify messages whose last known source state included Gmail Spam. Exact classification of a message formerly in Spam but subsequently moved through Trash requires an explicit historical-membership policy.
+
+Reconcile the **entire selected source mailbox set** before deciding a canonical message has disappeared. Never classify a vanished individual folder/UID observation as whole-message deletion. Preserve Gmail identity and last-known associations independently of archive-owned preservation mailboxes; folder scan order must not determine classification. Verify handling of empty/skipped Trash folders and excluded folders before implementing permanent-deletion decisions. No preservation code is claimed deployed.
