@@ -115,3 +115,13 @@ The intended controlled repair sequence is:
 11. only then resume/validate normal synchronization and export behavior.
 
 A small set of Takeout-specific untracked Spam artifacts was identified during investigation. That cleanup is separate from Gmail identity consolidation and must not be folded into canonicalization implicitly.
+
+## Post-consolidation controlled Gmail test checkpoint (October 2026)
+
+The earlier preflight and unsafe-to-apply findings above describe a **historical pre-repair archive**, not necessarily the present deployed archive. Subsequent controlled production import testing used canonical Gmail identity mappings and reported complete populated `gmail_msgid` coverage; do not extrapolate the old projected duplicate-row counts to the current database.
+
+A disposable two-message test created two canonical Email rows, each observed in five Gmail IMAP folders: Inbox, a custom test label, All Mail, Important and Sent Mail. In Stage 2 the custom label was removed from only one message. The next sync reported `new=0 vanished=1` for that label, `email.deleted=0`, and read-only SQLite inspection confirmed the affected canonical Email retained four IMAP observations while the untouched test Email retained five. This verifies label-removal reconciliation, not permanent-deletion preservation.
+
+A concurrent-arrival hypothesis explains cases where Inbox reports zero new observations but All Mail reports new observations: mailbox enumeration is sequential, not an atomic snapshot. A Stage 2 run also reported a new Spam observation. Per-record logging is needed before attributing any individual observation to a specific arrival.
+
+**Still unverified at this checkpoint:** moving a test message to Trash, subsequent permanent deletion, classification of Spam-origin messages, and behavior after removing the test label entirely. The proposed archive-owned preservation mailboxes and `--no-archive` behavior are future design, not implemented.
