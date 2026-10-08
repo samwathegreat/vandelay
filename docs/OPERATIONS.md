@@ -116,3 +116,27 @@ Aggregate operational counts and non-identifying structural findings may be docu
 ## Manager status
 
 A manager/orchestration container is planned for repeatable operation and health integration. Until that implementation is present and reviewed in source, these CLI procedures remain the operational reference.
+
+## October 2026 deployment and controlled sync checkpoint
+
+The older image SHA and pre-backfill snapshot above are **historical provenance**, not a claim that they remain the active runtime. The controlled live IMAP test used an on-demand Vandelay runtime binary from a preserved build directory, with a local SQLite archive on the HDD-backed mail-archive mount. Capture the actual binary hash, Git revision and container/runtime ABI afresh before any deployment change.
+
+A completed full sync on 2026-10-08 reported approximately nine minutes elapsed and successful SQLite integrity validation. A subsequent two-message test imported two canonical messages. Stage 2 removed one Gmail custom-label association and confirmed through read-only SQL that the canonical record remained with four observations; the control message retained five. The Stage 3 Trash-move sync was in progress at this documentation checkpoint. **Do not infer its outcome.**
+
+Safe diagnostic pattern: run one import at a time; write stdout/stderr to a diagnostic log using `tee`, and record elapsed time, CPU and peak RSS using `/usr/bin/time`. After a completed run inspect summary counters, then verify specific canonical records and IMAP observations with **read-only** SQLite queries. Do not perform manual production database updates as a test. A `new=0 vanished=0` per-folder summary does not establish zero processing cost; detailed IMAP and database timings are still needed.
+
+Example sanitized association inspection (replace numeric IDs with controlled test IDs):
+
+```sql
+SELECT e.id, i.gmail_msgid, i.folder, i.uid, e.mailbox_ids
+FROM emails AS e
+JOIN sync_id_imap AS i ON i.local_id=e.id AND i.type_name='email'
+WHERE e.id IN (1001,1002)
+ORDER BY e.id,i.folder;
+```
+
+For the planned manager, retain structured event logs with run identifiers, mailbox transitions, preservation decisions, phase durations, and bounded configurable retention. Do not log credentials, message bodies or raw private subjects/addresses. Consider that even Gmail numeric identifiers can be personal account metadata: avoid publishing real per-record logs.
+
+## Stalwart and Bulwark integration status
+
+Stalwart is the JMAP/IMAP destination store; the deployment uses persistent configuration/data on SSD-backed application storage and filesystem message blobs on an HDD-backed archive mount. Its JMAP discovery and health endpoints were exercised during setup. Bulwark is the intended search/webmail layer, but its exact deployed version, service wiring, index placement and readiness must be verified from current Compose/configuration before documenting them as operational fact. Vandelay remains an on-demand import/export tool, not a continuously running service. The comprehensive installation-specific maintainer guide (storage, service topology, monitoring, backup/restore and incident response) remains a separate deliverable.
