@@ -23,4 +23,4 @@ jobs:
       - name: Compile all test targets
         run: cargo test --locked --no-run
       - name: Gmail coordinator regression tests
-        run: cargo test --locked sync::import_imap::coordinator::tests:: -- --nocapture
+        run: 'cargo test --locked sync::import_imap::coordinator::tests:: -- --nocapture'
