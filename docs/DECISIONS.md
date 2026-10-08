@@ -65,3 +65,14 @@ The upstream README describes Vandelay as a broad multi-protocol migration utili
 - Possible future restoration/generalization of non-Gmail IMAP compatibility.
 
 Do not document planned items as deployed behavior until they are implemented and verified.
+
+## October 2026 accepted preservation and observability requirements (not yet implemented)
+
+- **Preservation by default:** when a Gmail message truly disappears from the reconciled source, retain its canonical content in an archive-owned `Deleted from Source` mailbox. Future `--no-archive` is an explicit opt-out to true mirror deletion; exact CLI semantics and migration need implementation review.
+- **Spam separation:** if the message's last known Gmail state included Spam, classify source disappearance into `Deleted from Spam` rather than ordinary deleted mail. Whether *historical* Spam membership survives a move through Trash remains a design question, not an implemented rule.
+- **No false deletion on label changes:** removing a label or moving a message between source folders must only reconcile observations/memberships while the canonical Gmail identity is still present.
+- **Whole-source reconciliation:** do not treat a per-folder `vanished` event as permanent deletion. Avoid scan-order-dependent classification, especially with Gmail's All Mail and Trash semantics.
+- **Auditable manager:** future orchestration should log run IDs, per-message identity and membership transitions, classification decisions, per-folder timings/IMAP and SQLite phase metrics, errors and resource usage, with configurable rotation and retention. Logs must redact secrets and minimize personal-message data.
+- **Documentation statuses:** distinguish observed/verified behavior, accepted future design, and unresolved tests. Do not describe the preservation feature or manager as shipped.
+
+**Controlled test status:** Stage 2 verified a custom-label removal with canonical retention and no canonical deletions. Stage 3 (move to Trash) and Stage 4 (permanent deletion) were pending when this checkpoint was written. Do not predeclare their outcomes.
