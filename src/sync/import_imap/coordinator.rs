@@ -525,15 +525,10 @@ fn run_into(
     // A failed folder or partial FETCH makes whole-source disappearance unsafe.
     // Leave prior observations intact so the next successful run can reconcile.
     if all_folders_succeeded && email_counts.failed == 0 {
-        for (folder, validity, uids) in &pending_vanished {
-            delete_vanished_emails(&mut conn, source_id, folder, *validity, uids, &mut email_counts)?;
-        }
-        if !vanished.is_empty() {
-            delete_vanished_folders(
-                &mut conn, source_id, &vanished,
-                &mut mailbox_counts, &mut email_counts, logger,
-            )?;
-        }
+        finalize_vanished_observations(
+            &mut conn, source_id, &pending_vanished, &vanished,
+            &mut mailbox_counts, &mut email_counts, logger,
+        )?;
     } else if !pending_vanished.is_empty() || !vanished.is_empty() {
         log_at(logger, LEVEL_DEFAULT, "deferred vanished observations and folders retained: incomplete IMAP scan");
     }
@@ -862,15 +857,47 @@ fn upsert_mailboxes(
     Ok(())
 }
 
-fn delete_vanished_folders(
+// Commit all disappearance-related changes together. If any cleanup fails,
+// SQLite rolls back every removed observation and mailbox in this phase.
+fn finalize_vanished_observations(
     conn: &mut Connection,
+    source_id: i64,
+    pending: &[(String, u32, Vec<u32>)],
+    vanished_folders: &[String],
+    mailbox_counts: &mut TypeCounts,
+    email_counts: &mut TypeCounts,
+    logger: Logger,
+) -> Result<(), Error> {
+    let tx = conn.transaction()?;
+    let mut staged_mailbox_counts = TypeCounts::default();
+    let mut staged_email_counts = TypeCounts::default();
+    for (folder, validity, uids) in pending {
+        for &uid in uids {
+            remove_email_observation(
+                &tx, source_id, folder, *validity, uid, &mut staged_email_counts,
+            )?;
+        }
+    }
+    delete_vanished_folders(
+        &tx, source_id, vanished_folders,
+        &mut staged_mailbox_counts, &mut staged_email_counts, logger,
+    )?;
+    tx.commit()?;
+    mailbox_counts.deleted += staged_mailbox_counts.deleted;
+    mailbox_counts.failed += staged_mailbox_counts.failed;
+    email_counts.deleted += staged_email_counts.deleted;
+    email_counts.updated += staged_email_counts.updated;
+    Ok(())
+}
+
+fn delete_vanished_folders(
+    tx: &rusqlite::Transaction<'_>,
     source_id: i64,
     folders: &[String],
     mailbox_counts: &mut TypeCounts,
     email_counts: &mut TypeCounts,
     logger: Logger,
 ) -> Result<(), Error> {
-    let tx = conn.transaction()?;
     for name in folders {
         let local_id = match db::imap_ids::local_for_mailbox(&tx, source_id, name)? {
             Some(id) => id,
@@ -911,7 +938,6 @@ fn delete_vanished_folders(
         db::imap_ids::delete_mailbox(&tx, source_id, name)?;
         mailbox_counts.deleted += 1;
     }
-    tx.commit()?;
     Ok(())
 }
 
