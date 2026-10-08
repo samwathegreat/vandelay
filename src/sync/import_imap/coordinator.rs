@@ -452,16 +452,9 @@ fn run_into(
 
     let mut vanished = vanished_folders(&local_mailboxes, &server_folder_set);
     vanished_depth_sort(&mut vanished, server_delimiter);
-    if !vanished.is_empty() {
-        delete_vanished_folders(
-            &mut conn,
-            source_id,
-            &vanished,
-            &mut mailbox_counts,
-            &mut email_counts,
-            logger,
-        )?;
-    }
+    // Delay removed-folder cleanup until surviving Gmail identities have
+    // been discovered in other folders during this run.
+
 
     let opts = RunOpts {
         source_id,
@@ -485,6 +478,10 @@ fn run_into(
     )
     .map_err(|e| Error::Connection(format!("worker pool: {e}")))?;
 
+    // Preserve old Gmail observations until every folder has had a chance to
+    // attach its new UID to the same canonical Email.
+    let mut pending_vanished: Vec<(String, u32, Vec<u32>)> = Vec::new();
+    let mut all_folders_succeeded = true;
     for (i, folder) in resolved.iter().enumerate() {
         if i > 0 {
             let _ = control_run_collect(&mut client, &control_ctx, "NOOP");
@@ -497,9 +494,11 @@ fn run_into(
             folder,
             opts,
             &mut email_counts,
+            &mut pending_vanished,
         ) {
             Ok(()) => {}
             Err(e) if e.aborts_run() => {
+                // Do not prune old observations on an incomplete source scan.
                 pool.shutdown();
                 let _ = client.logout();
                 *summary = Summary {
@@ -510,6 +509,7 @@ fn run_into(
                 return Err(e);
             }
             Err(e) => {
+                all_folders_succeeded = false;
                 log_at(
                     logger,
                     LEVEL_DEFAULT,
@@ -521,6 +521,17 @@ fn run_into(
     }
 
     pool.shutdown();
+
+    // A failed folder or partial FETCH makes whole-source disappearance unsafe.
+    // Leave prior observations intact so the next successful run can reconcile.
+    if all_folders_succeeded && email_counts.failed == 0 {
+        finalize_vanished_observations(
+            &mut conn, source_id, &pending_vanished, &vanished,
+            &mut mailbox_counts, &mut email_counts, logger,
+        )?;
+    } else if !pending_vanished.is_empty() || !vanished.is_empty() {
+        log_at(logger, LEVEL_DEFAULT, "deferred vanished observations and folders retained: incomplete IMAP scan");
+    }
 
     if client.has_capability("X-GM-EXT-1") {
         let coverage = db::imap_ids::gmail_identity_coverage(&conn, source_id)?;
@@ -846,15 +857,47 @@ fn upsert_mailboxes(
     Ok(())
 }
 
-fn delete_vanished_folders(
+// Commit all disappearance-related changes together. If any cleanup fails,
+// SQLite rolls back every removed observation and mailbox in this phase.
+fn finalize_vanished_observations(
     conn: &mut Connection,
+    source_id: i64,
+    pending: &[(String, u32, Vec<u32>)],
+    vanished_folders: &[String],
+    mailbox_counts: &mut TypeCounts,
+    email_counts: &mut TypeCounts,
+    logger: Logger,
+) -> Result<(), Error> {
+    let tx = conn.transaction()?;
+    let mut staged_mailbox_counts = TypeCounts::default();
+    let mut staged_email_counts = TypeCounts::default();
+    for (folder, validity, uids) in pending {
+        for &uid in uids {
+            remove_email_observation(
+                &tx, source_id, folder, *validity, uid, &mut staged_email_counts,
+            )?;
+        }
+    }
+    delete_vanished_folders(
+        &tx, source_id, vanished_folders,
+        &mut staged_mailbox_counts, &mut staged_email_counts, logger,
+    )?;
+    tx.commit()?;
+    mailbox_counts.deleted += staged_mailbox_counts.deleted;
+    mailbox_counts.failed += staged_mailbox_counts.failed;
+    email_counts.deleted += staged_email_counts.deleted;
+    email_counts.updated += staged_email_counts.updated;
+    Ok(())
+}
+
+fn delete_vanished_folders(
+    tx: &rusqlite::Transaction<'_>,
     source_id: i64,
     folders: &[String],
     mailbox_counts: &mut TypeCounts,
     email_counts: &mut TypeCounts,
     logger: Logger,
 ) -> Result<(), Error> {
-    let tx = conn.transaction()?;
     for name in folders {
         let local_id = match db::imap_ids::local_for_mailbox(&tx, source_id, name)? {
             Some(id) => id,
@@ -895,7 +938,6 @@ fn delete_vanished_folders(
         db::imap_ids::delete_mailbox(&tx, source_id, name)?;
         mailbox_counts.deleted += 1;
     }
-    tx.commit()?;
     Ok(())
 }
 
@@ -907,6 +949,7 @@ fn reconcile_folder(
     folder: &ResolvedFolder,
     opts: RunOpts,
     counts: &mut TypeCounts,
+    pending_vanished: &mut Vec<(String, u32, Vec<u32>)>,
 ) -> Result<(), Error> {
     let RunOpts {
         source_id,
@@ -976,7 +1019,16 @@ fn reconcile_folder(
                 folder.name, prev.uidvalidity, uidvalidity
             ),
         );
-        wipe_folder_emails(conn, source_id, &folder.name, counts)?;
+        // Retain old-UIDVALIDITY observations until new UID mappings are
+        // discovered, then prune them after a complete successful scan.
+        let stale: Vec<(u32, u32)> = conn.prepare(
+            "SELECT uidvalidity, uid FROM sync_id_imap WHERE source_id = ?1 AND type_name = ?2 AND folder = ?3",
+        )?.query_map(params![source_id, EMAIL_TYPE, &folder.name], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        for (old_validity, old_uid) in stale {
+            pending_vanished.push((folder.name.clone(), old_validity, vec![old_uid]));
+        }
     }
 
     let server_uids = call_with_retry(client, control_ctx, select_uids)
@@ -998,14 +1050,7 @@ fn reconcile_folder(
     );
 
     if !diff.vanished.is_empty() {
-        delete_vanished_emails(
-            conn,
-            source_id,
-            &folder.name,
-            uidvalidity,
-            &diff.vanished,
-            counts,
-        )?;
+        pending_vanished.push((folder.name.clone(), uidvalidity, diff.vanished.clone()));
     }
 
     if !diff.new.is_empty() {
@@ -1774,6 +1819,84 @@ mod tests {
             .unwrap();
         assert_eq!(exists, 0);
         assert_eq!(counts.deleted, 1);
+    }
+
+    #[test]
+    fn deferred_inbox_to_trash_move_preserves_canonical_identity() {
+        let (mut c, sid, email_id) = canonical_test_db();
+        c.execute(
+            "INSERT INTO mailboxes (id, name, role) VALUES (30, 'Trash', 'trash')",
+            [],
+        ).unwrap();
+        db::imap_ids::insert_mailbox(&c, sid, "[Gmail]/Trash", 30).unwrap();
+        let gmail_msgid = 12345678901234567890_u64;
+        c.execute(
+            "UPDATE sync_id_imap SET gmail_msgid = ?1 WHERE source_id = ?2 AND type_name = 'email'",
+            params![gmail_msgid.to_string(), sid],
+        ).unwrap();
+
+        // The old folder observations must remain available until the new
+        // folder can resolve the same X-GM-MSGID to the existing Email.
+        assert_eq!(
+            db::imap_ids::local_for_gmail_msgid(&c, sid, gmail_msgid).unwrap(),
+            Some(email_id),
+        );
+        db::imap_ids::insert_email(
+            &c, sid, "[Gmail]/Trash", 3, 303, email_id, Some(gmail_msgid),
+        ).unwrap();
+        let mut counts = TypeCounts::default();
+        delete_vanished_emails(&mut c, sid, "INBOX", 1, &[101], &mut counts).unwrap();
+        delete_vanished_emails(
+            &mut c, sid, "[Gmail]/All Mail", 2, &[202], &mut counts,
+        ).unwrap();
+        assert_eq!(counts.deleted, 0);
+        assert_eq!(
+            db::imap_ids::local_for_gmail_msgid(&c, sid, gmail_msgid).unwrap(),
+            Some(email_id),
+        );
+        let memberships: String = c.query_row(
+            "SELECT mailbox_ids FROM emails WHERE id = ?1",
+            params![email_id], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(memberships, "[30]");
+    }
+
+    #[test]
+    fn deferred_uidvalidity_replacement_preserves_canonical_identity() {
+        let (mut c, sid, email_id) = canonical_test_db();
+        let gmail_msgid = 987654321_u64;
+        c.execute(
+            "UPDATE sync_id_imap SET gmail_msgid = ?1 WHERE source_id = ?2 AND type_name = 'email'",
+            params![gmail_msgid.to_string(), sid],
+        ).unwrap();
+        db::imap_ids::insert_email(
+            &c, sid, "INBOX", 5, 501, email_id, Some(gmail_msgid),
+        ).unwrap();
+        let mut counts = TypeCounts::default();
+        delete_vanished_emails(&mut c, sid, "INBOX", 1, &[101], &mut counts).unwrap();
+        assert_eq!(counts.deleted, 0);
+        assert_eq!(
+            db::imap_ids::local_for_gmail_msgid(&c, sid, gmail_msgid).unwrap(),
+            Some(email_id),
+        );
+        assert_eq!(db::imap_ids::email_observation_count(&c, sid, email_id).unwrap(), 2);
+    }
+
+    #[test]
+    fn deferred_cleanup_does_not_prune_until_invoked() {
+        let (mut c, sid, email_id) = canonical_test_db();
+        let pending = vec![
+            ("INBOX".to_owned(), 1_u32, vec![101_u32]),
+            ("[Gmail]/All Mail".to_owned(), 2_u32, vec![202_u32]),
+        ];
+        // Simulate a failed folder: no finalization is called.
+        assert_eq!(db::imap_ids::email_observation_count(&c, sid, email_id).unwrap(), 2);
+        let mut counts = TypeCounts::default();
+        for (folder, validity, uids) in &pending {
+            delete_vanished_emails(&mut c, sid, folder, *validity, uids, &mut counts).unwrap();
+        }
+        assert_eq!(counts.deleted, 1);
+        assert_eq!(db::imap_ids::email_observation_count(&c, sid, email_id).unwrap(), 0);
     }
 
     #[test]

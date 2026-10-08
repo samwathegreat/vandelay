@@ -1,0 +1,26 @@
+name: Rust regression tests
+
+on:
+  push:
+    branches:
+      - fix/gmail-deferred-vanished-reconciliation
+  pull_request:
+    branches:
+      - gmail-canonical-mirror
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gmail-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile all test targets
+        run: cargo test --locked --no-run
+      - name: Gmail coordinator regression tests
+        run: 'cargo test --locked sync::import_imap::coordinator::tests:: -- --nocapture'
