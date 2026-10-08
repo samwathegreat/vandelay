@@ -485,6 +485,10 @@ fn run_into(
     )
     .map_err(|e| Error::Connection(format!("worker pool: {e}")))?;
 
+    // Preserve old Gmail observations until every folder has had a chance to
+    // attach its new UID to the same canonical Email.
+    let mut pending_vanished: Vec<(String, u32, Vec<u32>)> = Vec::new();
+    let mut all_folders_succeeded = true;
     for (i, folder) in resolved.iter().enumerate() {
         if i > 0 {
             let _ = control_run_collect(&mut client, &control_ctx, "NOOP");
@@ -497,9 +501,11 @@ fn run_into(
             folder,
             opts,
             &mut email_counts,
+            &mut pending_vanished,
         ) {
             Ok(()) => {}
             Err(e) if e.aborts_run() => {
+                // Do not prune old observations on an incomplete source scan.
                 pool.shutdown();
                 let _ = client.logout();
                 *summary = Summary {
@@ -510,6 +516,7 @@ fn run_into(
                 return Err(e);
             }
             Err(e) => {
+                all_folders_succeeded = false;
                 log_at(
                     logger,
                     LEVEL_DEFAULT,
@@ -521,6 +528,16 @@ fn run_into(
     }
 
     pool.shutdown();
+
+    // A failed folder or partial FETCH makes whole-source disappearance unsafe.
+    // Leave prior observations intact so the next successful run can reconcile.
+    if all_folders_succeeded && email_counts.failed == 0 {
+        for (folder, validity, uids) in &pending_vanished {
+            delete_vanished_emails(&mut conn, source_id, folder, *validity, uids, &mut email_counts)?;
+        }
+    } else if !pending_vanished.is_empty() {
+        log_at(logger, LEVEL_DEFAULT, "deferred vanished observations retained: incomplete IMAP scan");
+    }
 
     if client.has_capability("X-GM-EXT-1") {
         let coverage = db::imap_ids::gmail_identity_coverage(&conn, source_id)?;
@@ -907,6 +924,7 @@ fn reconcile_folder(
     folder: &ResolvedFolder,
     opts: RunOpts,
     counts: &mut TypeCounts,
+    pending_vanished: &mut Vec<(String, u32, Vec<u32>)>,
 ) -> Result<(), Error> {
     let RunOpts {
         source_id,
@@ -998,14 +1016,7 @@ fn reconcile_folder(
     );
 
     if !diff.vanished.is_empty() {
-        delete_vanished_emails(
-            conn,
-            source_id,
-            &folder.name,
-            uidvalidity,
-            &diff.vanished,
-            counts,
-        )?;
+        pending_vanished.push((folder.name.clone(), uidvalidity, diff.vanished.clone()));
     }
 
     if !diff.new.is_empty() {
