@@ -452,16 +452,9 @@ fn run_into(
 
     let mut vanished = vanished_folders(&local_mailboxes, &server_folder_set);
     vanished_depth_sort(&mut vanished, server_delimiter);
-    if !vanished.is_empty() {
-        delete_vanished_folders(
-            &mut conn,
-            source_id,
-            &vanished,
-            &mut mailbox_counts,
-            &mut email_counts,
-            logger,
-        )?;
-    }
+    // Delay removed-folder cleanup until surviving Gmail identities have
+    // been discovered in other folders during this run.
+
 
     let opts = RunOpts {
         source_id,
@@ -535,8 +528,14 @@ fn run_into(
         for (folder, validity, uids) in &pending_vanished {
             delete_vanished_emails(&mut conn, source_id, folder, *validity, uids, &mut email_counts)?;
         }
-    } else if !pending_vanished.is_empty() {
-        log_at(logger, LEVEL_DEFAULT, "deferred vanished observations retained: incomplete IMAP scan");
+        if !vanished.is_empty() {
+            delete_vanished_folders(
+                &mut conn, source_id, &vanished,
+                &mut mailbox_counts, &mut email_counts, logger,
+            )?;
+        }
+    } else if !pending_vanished.is_empty() || !vanished.is_empty() {
+        log_at(logger, LEVEL_DEFAULT, "deferred vanished observations and folders retained: incomplete IMAP scan");
     }
 
     if client.has_capability("X-GM-EXT-1") {
@@ -994,7 +993,16 @@ fn reconcile_folder(
                 folder.name, prev.uidvalidity, uidvalidity
             ),
         );
-        wipe_folder_emails(conn, source_id, &folder.name, counts)?;
+        // Retain old-UIDVALIDITY observations until new UID mappings are
+        // discovered, then prune them after a complete successful scan.
+        let stale: Vec<(u32, u32)> = conn.prepare(
+            "SELECT uidvalidity, uid FROM sync_id_imap WHERE source_id = ?1 AND type_name = ?2 AND folder = ?3",
+        )?.query_map(params![source_id, EMAIL_TYPE, &folder.name], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        for (old_validity, old_uid) in stale {
+            pending_vanished.push((folder.name.clone(), old_validity, vec![old_uid]));
+        }
     }
 
     let server_uids = call_with_retry(client, control_ctx, select_uids)
